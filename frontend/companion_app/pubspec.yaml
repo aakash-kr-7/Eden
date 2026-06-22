@@ -1,0 +1,72 @@
+name: companion_app
+description: Companion AI — Nova
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  google_fonts: ^6.2.1  
+
+  cupertino_icons: ^1.0.8
+
+  # HTTP client for API calls
+  http: ^1.2.0
+
+  # Persistent local storage
+  shared_preferences: ^2.2.2
+
+  # Biometric native authentication
+  local_auth: ^2.1.8
+
+  # UUID generation
+  uuid: ^4.3.3
+
+  firebase_core: ^4.7.0
+  firebase_auth: ^6.0.0
+  firebase_messaging: ^16.0.0
+  google_sign_in: ^6.2.1
+  firebase_storage: ^13.0.0
+  flutter_native_splash: ^2.4.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_launcher_icons: ^0.14.4
+  flutter_lints: ^5.0.0
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/sol_logo.png"
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/sol_logo.png
+    - assets/images/google_logo.png
+
+  fonts:
+    - family: PlusJakartaSans
+      fonts:
+        - asset: assets/fonts/PlusJakartaSans-Regular.ttf
+        - asset: assets/fonts/PlusJakartaSans-Bold.ttf
+          weight: 700
+    - family: CormorantGaramond
+      fonts:
+        - asset: assets/fonts/CormorantGaramond-Light.ttf
+          weight: 300
+        - asset: assets/fonts/CormorantGaramond-Regular.ttf
+          weight: 400  
+
+flutter_native_splash:
+  color: "#000000"                  # This sets your full background to true black
+  image: assets/images/sol_logo.png # Path to your logo asset 

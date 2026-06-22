@@ -1,0 +1,62 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyo
+*.pyd
+
+# Environment variables
+.env
+.env.*
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Backend local databases
+*.db
+*.sqlite3
+
+# Node modules (if frontend/backend ever uses npm)
+node_modules/
+
+# Coverage reports
+coverage/
+htmlcov/
+
+# OS junk
+Thumbs.db
+
+# FastAPI/Uvicorn
+*.pid
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Package distribution
+dist/
+*.egg-info/
+
+# Logs
+logs/
+*.out
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+backend/.venv/
+.venv/
+venv/
+env/
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
