@@ -4,7 +4,8 @@ from pydantic import BaseModel
 
 from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
 from memory.store import db
-from personality.registry import rank_companions_for_user, build_opening_line
+from personality.registry import build_opening_line, get_partner_instance, resolve_or_assign_primary_pair, clear_cache
+from personality.generator import generate_partner
 from core.burst_engine import plan_burst_response
 from memory.relationship_engine import on_message_saved, on_session_started
 
@@ -19,6 +20,7 @@ class OnboardingCompleteRequest(BaseModel):
     depth_preference: str
     behavioral_guardrail: str
 
+
 @router.get("/onboarding/status")
 async def get_onboarding_status(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
@@ -31,6 +33,7 @@ async def get_onboarding_status(
     except Exception as e:
         logger.exception("Failed to get onboarding status for user %s", identity.uid)
         raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
+
 
 @router.post("/onboarding/complete")
 async def complete_onboarding(
@@ -53,46 +56,26 @@ async def complete_onboarding(
             }
             db.save_onboarding_signals(user_id, payload.preferred_name, signals, onboarding_completed=1)
             
-            # 3. Rank companions using seeded chemistry
-            ranked = rank_companions_for_user(user_id)
-            if not ranked:
-                raise ValueError("No companions ranked for user.")
+            # 3. Generate deeply personalized partner
+            partner_data = generate_partner(signals, user_id)
             
-            companion_1 = ranked[0]
-            
-            # Companion 1 (Top Match): Set as the primary pair
-            pair_1 = db.get_or_create_relationship_pair(
+            # 4. Save partner in database (which dynamically registers them as a companion to preserve FK constraints)
+            db.save_partner(
                 user_id=user_id,
-                companion_id=companion_1.id,
-                assignment_source="matcher",
-                assignment_reason=f"matched from onboarding signals ({companion_1.id})",
+                partner_id=partner_data["id"],
+                name=partner_data["name"],
+                archetype_id=partner_data["archetype_id"],
+                persona_json=partner_data["persona_json"],
+                voice_style_json=partner_data["voice_style_json"],
             )
-            db.set_primary_pair(pair_1["id"])
             
-            # Companion 2 & Companion 3 (Ranks 2 and 3): Initialize pairs under assignment_source="matcher"
-            pairs_to_update = [pair_1]
+            # Clear registry cache for user to force load new partner
+            clear_cache(user_id)
             
-            if len(ranked) > 1:
-                companion_2 = ranked[1]
-                pair_2 = db.get_or_create_relationship_pair(
-                    user_id=user_id,
-                    companion_id=companion_2.id,
-                    assignment_source="matcher",
-                    assignment_reason=f"matched from onboarding signals ({companion_2.id})",
-                )
-                pairs_to_update.append(pair_2)
-                
-            if len(ranked) > 2:
-                companion_3 = ranked[2]
-                pair_3 = db.get_or_create_relationship_pair(
-                    user_id=user_id,
-                    companion_id=companion_3.id,
-                    assignment_source="matcher",
-                    assignment_reason=f"matched from onboarding signals ({companion_3.id})",
-                )
-                pairs_to_update.append(pair_3)
+            # 5. Resolve and assign primary relationship pair
+            pair = resolve_or_assign_primary_pair(user_id)
             
-            # 4. Set the proactive cadence for all three pairs in relationship_pairs
+            # 6. Apply cadence to pair
             cadence_map = {
                 "every_now_and_then": "gentle",
                 "when_it_matters": "gentle",
@@ -100,51 +83,52 @@ async def complete_onboarding(
                 "always_around": "frequent",
             }
             cadence = cadence_map.get(payload.presence_frequency, "balanced")
-            for p in pairs_to_update:
-                db.update_pair_proactive_settings(p["id"], proactive_cadence=cadence)
+            db.update_pair_proactive_settings(pair["id"], proactive_cadence=cadence)
             
-            # 5. Create active conversation, generate opener and save burst response
+            # Get loaded partner instance from registry
+            partner_instance = get_partner_instance(user_id)
+            if not partner_instance:
+                raise ValueError("Generated partner instance could not be loaded from registry.")
+                
+            # 7. Create active conversation, generate opener and save burst response
             conversation_id = db.create_conversation(
                 user_id=user_id,
-                pair_id=pair_1["id"],
-                companion_id=companion_1.id,
+                pair_id=pair["id"],
+                companion_id=partner_instance.id,
             )
-            on_session_started(pair_1["id"])
+            on_session_started(pair["id"])
             
-            # Reload updated pair_1 to pass to plan_burst_response
-            pair_1_updated = db.get_pair_by_id(pair_1["id"]) or pair_1
+            # Reload updated pair to pass to plan_burst_response
+            pair_updated = db.get_pair_by_id(pair["id"]) or pair
             
-            discovery = companion_1.discovery or {}
-            humanizing_details = discovery.get("humanizing_details") or []
-            
-            opening_line = build_opening_line(companion_1, session_count=1)
+            opening_line = build_opening_line(partner_instance, session_count=1)
             opening_plan = plan_burst_response(
                 raw_text=opening_line,
-                character=companion_1,
+                character=partner_instance,
                 is_opening=True,
-                relationship_state=pair_1_updated,
+                relationship_state=pair_updated,
             )
             for burst in opening_plan.bursts:
                 db.save_message(
                     conversation_id=conversation_id,
                     user_id=user_id,
-                    pair_id=pair_1["id"],
-                    companion_id=companion_1.id,
+                    pair_id=pair["id"],
+                    companion_id=partner_instance.id,
                     role="assistant",
                     content=burst.text,
                 )
-                on_message_saved(pair_1["id"], "assistant", burst.text)
+                on_message_saved(pair["id"], "assistant", burst.text)
             
         return {
             "status": "success",
             "success": True,
-            "companion_id": companion_1.id,
-            "companion_name": companion_1.name,
-            "companion_summary": companion_1.summary or companion_1.core_identity.get("vibe", ""),
-            "humanizing_details": humanizing_details,
-            "conversational_vibe": companion_1.archetype or companion_1.core_identity.get("vibe", ""),
+            "companion_id": partner_instance.id,
+            "companion_name": partner_instance.name,
+            "companion_summary": partner_instance.summary,
+            "humanizing_details": partner_instance.personality_traits["quirks"],
+            "conversational_vibe": partner_instance.archetype,
             "opening_line": opening_plan.combined_text,
-            "pair_id": pair_1["id"],
+            "pair_id": pair["id"],
         }
     except Exception as e:
         logger.exception("Failed to complete onboarding for user %s", user_id)

@@ -108,17 +108,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"ChromaDB initialization failed: {e}. Memory features disabled.")
 
-    # 4. Load default character (validates the JSON is parseable)
-    from personality.loader import load_character
-    from personality.registry import sync_companion_registry
-    try:
-        char = load_character(settings.DEFAULT_CHARACTER)
-        logger.info(f"Default character loaded: {char.name}")
-    except Exception as e:
-        logger.critical(f"Failed to load default character: {e}")
-        sys.exit(1)
-
-    # 5. Initialize Firebase token verification
+    # 4. Initialize Firebase token verification
     try:
         initialize_firebase_auth()
         logger.info("Firebase auth verification ready")
@@ -128,14 +118,6 @@ async def lifespan(app: FastAPI):
         else:
             logger.critical(f"Failed to initialize Firebase auth: {e}")
             sys.exit(1)
-
-    # 6. Sync companion registry from personality assets
-    try:
-        sync_companion_registry()
-        logger.info("Companion registry synced")
-    except Exception as e:
-        logger.critical(f"Failed to sync companion registry: {e}")
-        sys.exit(1)
 
     # 7. Start the Proactive Dispatch Worker loop in the background
     worker_task = None
@@ -353,7 +335,7 @@ async def health_check(deep: bool = Query(default=False)):
         health["subsystems"]["chromadb"] = f"error: {e}"
         health["status"] = "degraded"
 
-    # Check LLM configuration. Railway should not depend on an external Groq
+    # Check LLM configuration. The health check should not depend on an external Groq
     # round-trip just to consider the service alive.
     health["subsystems"]["groq"] = "configured" if settings.GROQ_API_KEY else "missing_api_key"
     health["model"] = settings.LLM_MODEL

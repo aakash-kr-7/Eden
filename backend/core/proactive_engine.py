@@ -15,7 +15,7 @@ from core.context_builder import build_context
 from core.llm import generate_reply
 from memory.relationship_engine import on_message_saved, on_session_started
 from memory.store import db
-from personality.loader import load_character
+from personality.registry import get_partner_instance
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ async def maybe_generate_for_user(user_id: str, limit: int = 1, force: bool = Fa
     for pair in sorted_pairs:
         if len(created) >= limit:
             break
-        companion = load_character(pair["companion_id"])
+        companion = get_partner_instance(pair["companion_id"])
         style = _build_proactive_style(companion, pair)
 
         if not force and not int(preferences.get("allow_proactive_messages") or 0):
@@ -312,7 +312,8 @@ async def _dispatch_due_pending_notifications(user_id: str) -> None:
             companion_name = payload.get("companion_name")
             if not companion_name:
                 try:
-                    companion_name = load_character(companion_id).name
+                    partner_inst = get_partner_instance(companion_id or user_id)
+                    companion_name = partner_inst.name if partner_inst else "Companion"
                 except Exception:
                     companion_name = "Companion"
 
@@ -409,8 +410,8 @@ async def _generate_proactive_event(
             conn_id = chosen_connection.get("character_id")
             if conn_id:
                 try:
-                    conn_char = load_character(conn_id)
-                    connected_companion_name = conn_char.name
+                    conn_char = get_partner_instance(conn_id)
+                    connected_companion_name = conn_char.name if conn_char else conn_id.title()
                 except Exception:
                     connected_companion_name = conn_id.title()
                     

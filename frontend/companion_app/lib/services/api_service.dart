@@ -9,7 +9,7 @@ import 'auth_service.dart';
 class ApiConfig {
   static const String _baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'sol-backend-production.up.railway.app',
+    defaultValue: 'http://localhost:8000',
   );
 
   static String get baseUrl {

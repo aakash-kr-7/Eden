@@ -871,7 +871,36 @@ class Database:
                 "delivered_at DATETIME",
                 "payload_json TEXT",
             ],
+            "partners": [
+                "id TEXT",
+                "user_id TEXT",
+                "name TEXT",
+                "archetype_id TEXT",
+                "persona_json TEXT",
+                "voice_style_json TEXT",
+                "created_at DATETIME",
+                "updated_at DATETIME",
+            ],
         }
+
+        # Check and create partners table dynamically if missing
+        if not self._table_exists("partners"):
+            try:
+                self.conn.execute("""
+                    CREATE TABLE partners (
+                        id                    TEXT PRIMARY KEY,
+                        user_id               TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        name                  TEXT NOT NULL,
+                        archetype_id          TEXT NOT NULL,
+                        persona_json          TEXT NOT NULL,
+                        voice_style_json      TEXT NOT NULL,
+                        created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                logger.info("Created table partners dynamically")
+            except Exception as e:
+                logger.error("Failed to dynamically create partners table: %s", e)
 
         # Check and create queued_notifications table & indexes dynamically if missing
         if not self._table_exists("queued_notifications"):
@@ -1043,6 +1072,70 @@ class Database:
         return self._row_to_dict(
             self.conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         )
+
+    def save_partner(
+        self,
+        user_id: str,
+        partner_id: str,
+        name: str,
+        archetype_id: str,
+        persona_json: dict,
+        voice_style_json: dict,
+    ):
+        now = _utcnow_iso()
+        persona_str = json.dumps(persona_json)
+        voice_style_str = json.dumps(voice_style_json)
+        
+        self.conn.execute(
+            """
+            INSERT INTO partners
+                (id, user_id, name, archetype_id, persona_json, voice_style_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                id = excluded.id,
+                name = excluded.name,
+                archetype_id = excluded.archetype_id,
+                persona_json = excluded.persona_json,
+                voice_style_json = excluded.voice_style_json,
+                updated_at = excluded.updated_at
+            """,
+            (partner_id, user_id, name, archetype_id, persona_str, voice_style_str, now, now),
+        )
+
+        pacing = persona_json.get("pacing_parameters", {})
+        self.upsert_companion(
+            companion_id=partner_id,
+            name=name,
+            archetype=persona_json.get("core_temperament", "warm"),
+            summary=persona_json.get("summary", "Your personal partner"),
+            introduction_style="casual",
+            relationship_label="friend",
+            match_weight=1,
+            sort_order=0,
+            proactive_frequency="medium",
+            impulsiveness=pacing.get("impulsiveness", 0.5),
+            attachment_speed=pacing.get("attachment_speed", 0.5),
+            boredom_threshold=pacing.get("boredom_threshold", 0.5),
+            loneliness_tolerance=pacing.get("loneliness_tolerance", 0.5),
+            emotional_openness=pacing.get("emotional_openness", 0.5),
+            social_confidence=pacing.get("social_confidence", 0.5),
+            texting_consistency=pacing.get("texting_consistency", 0.5),
+            disappearance_tendency=pacing.get("disappearance_tendency", 0.5),
+            late_night_probability=pacing.get("late_night_probability", 0.5),
+            double_text_probability=pacing.get("double_text_probability", 0.5),
+            emotional_volatility=pacing.get("emotional_volatility", 0.5),
+        )
+
+    def get_partner(self, user_id: str) -> Optional[dict]:
+        row = self.conn.execute(
+            "SELECT * FROM partners WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if not row:
+            return None
+        res = dict(row)
+        res["persona_json"] = json.loads(res["persona_json"])
+        res["voice_style_json"] = json.loads(res["voice_style_json"])
+        return res
 
     def list_users(self, limit: int = 50) -> list[dict]:
         rows = self.conn.execute(
@@ -3344,6 +3437,10 @@ class Database:
             (notification_id,),
         ).fetchone()
         return dict(row) if row else None
+
+    def list_companion_names(self) -> list[str]:
+        rows = self.conn.execute("SELECT DISTINCT name FROM companions").fetchall()
+        return [row["name"] for row in rows if row["name"]]
 
 
 db = Database()

@@ -26,5 +26,5 @@ flutter test
 
 ## Notes
 
-- Set the backend base URL to your local FastAPI instance or Railway deployment.
+- Set the backend base URL to your local FastAPI instance.
 - Firebase app configuration must be present for sign-in and messaging to work.

@@ -47,7 +47,7 @@ def initialize_firebase_auth() -> None:
     except Exception as exc:
         hint = (
             "Firebase Admin could not initialize without explicit credentials. "
-            "On Railway, mount a Firebase service account JSON and set "
+            "Mount a Firebase service account JSON and set "
             "FIREBASE_SERVICE_ACCOUNT_PATH, or provide GOOGLE_APPLICATION_CREDENTIALS."
         )
         if settings.DEBUG or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):

@@ -33,7 +33,7 @@ from typing import Optional
 import httpx
 
 from config import settings
-from personality.loader import list_characters, load_character
+from memory.store import db
 
 logger = logging.getLogger(__name__)
 
@@ -235,12 +235,12 @@ def _clean_response(text: str) -> str:
 
 
 def _known_speaker_labels() -> list[str]:
-    labels = {"Assistant", "AI"}
+    labels = {"Assistant", "AI", "Partner"}
     try:
-        for character_id in list_characters():
-            character = load_character(character_id)
-            labels.add(character.id)
-            labels.add(character.name)
+        names = db.list_companion_names()
+        for name in names:
+            labels.add(name)
+            labels.add(f"partner_{name.lower()}")
     except Exception:
         labels.add(settings.DEFAULT_CHARACTER)
     return sorted(labels, key=len, reverse=True)

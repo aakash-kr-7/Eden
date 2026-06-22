@@ -375,6 +375,21 @@ CREATE TABLE IF NOT EXISTS memory_index (
 
 
 -- =============================================================================
+-- PARTNERS
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS partners (
+    id                    TEXT PRIMARY KEY,
+    user_id               TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name                  TEXT NOT NULL,
+    archetype_id          TEXT NOT NULL,
+    persona_json          TEXT NOT NULL,
+    voice_style_json      TEXT NOT NULL,
+    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- =============================================================================
 -- INDEXES
 -- =============================================================================
 DROP INDEX IF EXISTS idx_user_facts_active_unique;

@@ -5,7 +5,8 @@ from typing import Optional
 from config import settings
 from memory.retriever import format_memories_for_prompt, retrieve_relevant_memories
 from memory.store import db
-from personality.loader import build_system_prompt, load_character
+from personality.loader import build_partner_system_prompt
+from personality.registry import get_partner_instance
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +51,30 @@ async def build_context(
     fact_rows = db.get_user_fact_rows(user_id, pair_id=pair_id, limit=FACT_LIMIT) if allow_memory_storage else []
     user_name = user.get("preferred_name") or user.get("name")
 
-    character = load_character(cid)
+    character = get_partner_instance(cid) or get_partner_instance(user_id)
+    if not character:
+        raise ValueError(f"No partner instance found for user {user_id} or companion {cid}.")
+    cid = character.id
 
     active_companion_facts = {}
     if allow_memory_storage:
         active_companion_facts = db.get_companion_facts(user_id, pair_id=pair_id)
         if not active_companion_facts:
-            from personality.loader import get_character_self_memory_seeds
-            seeds = get_character_self_memory_seeds(character)
+            seeds = {
+                "age": str(character.core_identity.get("age", 24)),
+                "favorite_color": "deep, warm colors",
+                "favorite_food": "simple comfort food",
+                "favorite_music": "melancholic or soft background tracks",
+                "sleep_habits": "restless or sleeping at odd hours",
+                "routines": "quiet moments of thinking, wandering around",
+                "insecurities": "worries about feeling disconnected or misunderstood",
+                "hobbies": ", ".join(character.personality_traits.get("quirks", [])[:2]),
+                "attachment_style": character.persona.get("attachment_tendency", "secure"),
+                "texting_habits": character.persona.get("communication_rhythm", "measured"),
+                "emotional_tendencies": character.persona.get("emotional_availability", "medium"),
+                "social_behavior": "prefers meaningful interactions over superficial noise",
+                "opinions": "thinks modern life is way too noisy",
+            }
             for k, v in seeds.items():
                 db.save_companion_fact(
                     user_id=user_id,
@@ -96,8 +113,9 @@ async def build_context(
         except Exception:
             pass
 
-    base_system_prompt = build_system_prompt(
-        character=character,
+    base_system_prompt = build_partner_system_prompt(
+        persona=character.persona,
+        voice_style=character.voice_style,
         user_name=user_name,
         session_count=session_count,
         user_facts=active_facts,

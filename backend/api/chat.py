@@ -13,12 +13,12 @@ from memory.extractor import extract_and_save
 from memory.relationship_engine import on_message_saved, on_session_started
 from memory.retriever import get_memory_count
 from memory.store import db
-from personality.loader import load_character
 from personality.registry import (
     build_inbox_entries,
     build_opening_line,
     build_pair_payload,
     get_active_companion_summaries,
+    get_partner_instance,
     resolve_or_assign_primary_pair,
 )
 
@@ -111,7 +111,7 @@ async def chat(
     pair = _resolve_pair(identity, requested_character_id=request.character_id)
     from core.concurrency import pair_lock_context
     async with pair_lock_context(pair["id"]):
-        companion = load_character(pair["companion_id"])
+        companion = get_partner_instance(pair["companion_id"])
         user = db.get_or_create_user(
             user_id=identity.uid,
             character_id=pair["companion_id"],
@@ -395,7 +395,7 @@ async def start_session(
         if request.resume_existing
         else None
     )
-    character = load_character(pair["companion_id"])
+    character = get_partner_instance(pair["companion_id"])
     mem_count = get_memory_count(pair_id=pair["id"], user_id=identity.uid)
 
     if existing_conversation_id:
@@ -536,7 +536,7 @@ async def get_my_companions(identity: AuthenticatedIdentity = Depends(get_authen
         primary_pair = _resolve_pair(identity)
 
     return {
-        "available_companions": get_active_companion_summaries(),
+        "available_companions": get_active_companion_summaries(identity.uid),
         "pairs": [build_pair_payload(pair) for pair in db.list_pairs_for_user(identity.uid)],
         "primary_pair": build_pair_payload(primary_pair),
         "inbox_entries": build_inbox_entries(identity.uid),

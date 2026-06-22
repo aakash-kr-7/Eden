@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from personality.loader import Character
+from personality.registry import Partner
 
 MAX_BURSTS = 4
 EXPLICIT_BURST_TOKEN = "[BURST]"
@@ -25,7 +25,7 @@ class BurstPlan:
 
 def plan_burst_response(
     raw_text: str,
-    character: Character,
+    character: Partner,
     user_message: Optional[str] = None,
     is_opening: bool = False,
     relationship_state: Optional[dict] = None,
@@ -104,7 +104,7 @@ def _split_into_bursts(text: str) -> list[str]:
     return [_clean_segment(text)]
 
 
-def _heuristic_split(text: str, character: Character, relationship_state: Optional[dict] = None) -> list[str]:
+def _heuristic_split(text: str, character: Partner, relationship_state: Optional[dict] = None) -> list[str]:
     text = _clean_segment(text)
     if not text:
         return []
@@ -150,7 +150,7 @@ def _split_sentences(text: str) -> list[str]:
     return [_clean_segment(chunk) for chunk in chunks if _clean_segment(chunk)]
 
 
-def _group_sentences(sentences: list[str], character: Character, relationship_state: Optional[dict] = None) -> list[str]:
+def _group_sentences(sentences: list[str], character: Partner, relationship_state: Optional[dict] = None) -> list[str]:
     mp = character.matching_profile or {}
     rhythm = mp.get("rhythm", "steady")
     closeness = float(relationship_state.get("closeness_score") or 0.18) if relationship_state else 0.18
@@ -200,7 +200,7 @@ def _split_on_soft_connectors(text: str, rhythm: str = "steady") -> list[str]:
     return cleaned
 
 
-def _collapse_small_bursts(segments: list[str], character: Character, relationship_state: Optional[dict] = None) -> list[str]:
+def _collapse_small_bursts(segments: list[str], character: Partner, relationship_state: Optional[dict] = None) -> list[str]:
     if len(segments) <= 1:
         return segments
 
@@ -265,7 +265,7 @@ def _delay_for_segment(
     pause_intensity: str,
     is_opening: bool,
     is_follow_up: bool,
-    character: Character,
+    character: Partner,
     relationship_state: Optional[dict] = None,
 ) -> int:
     trust = float(relationship_state.get("trust_score") or 0.18) if relationship_state else 0.18
@@ -352,7 +352,7 @@ def _typing_duration_for_segment(
     segment: str,
     pause_intensity: str,
     is_follow_up: bool,
-    character: Character,
+    character: Partner,
     relationship_state: Optional[dict] = None,
 ) -> int:
     comfort = float(relationship_state.get("comfort_score") or 0.14) if relationship_state else 0.14

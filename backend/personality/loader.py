@@ -1,25 +1,5 @@
 # =============================================================================
-# personality/loader.py — Character Personality Loader
-# =============================================================================
-#
-# PURPOSE:
-#   Loads character JSON files (like nova.json) and converts them into a
-#   structured system prompt that gets injected at the top of every LLM call.
-#
-# HOW IT WORKS:
-#   1. Reads the character JSON from /personality/characters/<name>.json
-#   2. Builds a rich, structured system prompt from the JSON fields
-#   3. Returns it as a string to context_builder.py
-#
-# WHY A SEPARATE FILE:
-#   Personality is a PRODUCT ASSET. Separating it from code means you can
-#   iterate on Nova's voice without touching any Python. Designers, writers,
-#   and founders can tune personality in JSON without breaking anything.
-#
-# USAGE:
-#   from personality.loader import load_character, build_system_prompt
-#   character = load_character("nova")
-#   system_prompt = build_system_prompt(character)
+# personality/loader.py — Archetype Loader and System Prompt Builder
 # =============================================================================
 
 import json
@@ -32,178 +12,48 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Data class for a loaded character
-# ---------------------------------------------------------------------------
-
-class Character:
+def list_archetypes() -> list[dict]:
     """
-    Represents a loaded AI companion character.
-    Wraps the raw JSON so we can access fields cleanly.
+    Scans the archetypes folder and returns a list of dictionaries,
+    each containing at least 'archetype_id'.
     """
-    def __init__(self, data: dict):
-        self.raw = data
-        self.id = data["id"]
-        self.name = data["name"]
-        self.archetype = data.get("archetype", "")
-        self.summary = data.get("summary", "")
-        self.introduction_style = data.get("introduction_style", "")
-        self.core_identity = data.get("core_identity", {})
-        self.personality_traits = data.get("personality_traits", {})
-        self.texting_style = data.get("texting_style", {})
-        self.emotional_intelligence = data.get("emotional_intelligence", {})
-        
-        # Robustly load memory_behavior, fallback to custom outer keys if structural mismatch exists
-        mem_data = data.get("memory_behavior")
-        if not mem_data:
-            base_id = self.id.split("_")[0] if "_" in self.id else self.id
-            possible_keys = [
-                f"how_{self.id}_references_memory",
-                f"how_{base_id}_references_memory",
-                "how_nova_references_memory"
-            ]
-            for pk in possible_keys:
-                if pk in data:
-                    mem_data = data[pk]
-                    break
-        self.memory_behavior = mem_data or {}
+    # settings.CHARACTERS_DIR is sol_mvp/backend/personality/characters
+    # We resolve the archetypes sibling folder
+    archetypes_dir = Path(settings.CHARACTERS_DIR).parent / "archetypes"
+    if not archetypes_dir.exists():
+        logger.warning("Archetypes directory %s does not exist. Creating it.", archetypes_dir)
+        archetypes_dir.mkdir(parents=True, exist_ok=True)
+    
+    results = []
+    for p in archetypes_dir.glob("*.json"):
+        if not p.stem.startswith("_"):
+            results.append({"archetype_id": p.stem})
+    
+    # Sort for deterministic display / processing order
+    results.sort(key=lambda x: x["archetype_id"])
+    return results
 
-        self.relationship_arc = data.get("relationship_arc", {})
-        self.relationship_defaults = data.get("relationship_defaults", {})
-        self.discovery = data.get("discovery", {})
-        self.social_graph = data.get("social_graph", {})
-        self.matching_profile = data.get("matching_profile", {})
-        self.proactive_profile = data.get("proactive_profile", {})
-        self.opinion_seeds = data.get("opinion_seeds", {})
-        self.forbidden_behaviors = data.get("forbidden_behaviors", [])
 
-        # High-fidelity personality parameters
-        self.proactive_frequency = data.get("proactive_profile", {}).get("proactive_frequency", data.get("proactive_frequency", "medium"))
+def load_archetype(archetype_id: str) -> dict:
+    """
+    Loads a specific archetype JSON file from personality/archetypes/.
+    """
+    archetypes_dir = Path(settings.CHARACTERS_DIR).parent / "archetypes"
+    arch_path = archetypes_dir / f"{archetype_id}.json"
+    
+    if not arch_path.exists():
+        raise FileNotFoundError(f"Archetype '{archetype_id}' not found at {arch_path}.")
         
-        params = data.get("personality_parameters", {})
-        def _get_float(key, default=0.5):
-            val = params.get(key, data.get(key))
-            if val is None:
-                return default
-            try:
-                return float(val)
-            except (ValueError, TypeError):
-                return default
-
-        self.impulsiveness = _get_float("impulsiveness", 0.5)
-        self.attachment_speed = _get_float("attachment_speed", 0.5)
-        self.boredom_threshold = _get_float("boredom_threshold", 0.5)
-        self.loneliness_tolerance = _get_float("loneliness_tolerance", 0.5)
-        self.emotional_openness = _get_float("emotional_openness", 0.5)
-        self.social_confidence = _get_float("social_confidence", 0.5)
-        self.texting_consistency = _get_float("texting_consistency", 0.5)
-        self.disappearance_tendency = _get_float("disappearance_tendency", 0.5)
-        self.late_night_probability = _get_float("late_night_probability", 0.5)
-        
-        dt_val = params.get("double_text_probability", data.get("proactive_profile", {}).get("double_text_likelihood", data.get("double_text_probability")))
+    with open(arch_path, "r", encoding="utf-8") as f:
         try:
-            self.double_text_probability = float(dt_val) if dt_val is not None else 0.5
-        except (ValueError, TypeError):
-            self.double_text_probability = 0.5
-            
-        self.emotional_volatility = _get_float("emotional_volatility", 0.5)
-
-    def get_relationship_phase(self, session_count: int) -> dict:
-        """
-        Returns the relationship arc phase based on how many sessions the user
-        has had. Used to calibrate intimacy level in the prompt.
-        """
-        arc = self.relationship_arc
-        if session_count <= 3:
-            return arc.get("phase_1_stranger", {})
-        elif session_count <= 10:
-            return arc.get("phase_2_acquaintance", {})
-        else:
-            return arc.get("phase_3_close", {})
-
-
-# ---------------------------------------------------------------------------
-# Loader
-# ---------------------------------------------------------------------------
-
-_character_cache: dict[str, Character] = {}   # Cache so we don't re-read disk every message
-
-
-def load_character(character_id: Optional[str] = None) -> Character:
-    """
-    Loads a character from its JSON file. Caches after first load.
-    Supports mapping full suffix IDs to base filenames (e.g. theo_thoughtful_day -> theo).
-    """
-    cid = character_id or settings.DEFAULT_CHARACTER
-    # Return from cache if already loaded
-    if cid in _character_cache:
-        return _character_cache[cid]
-    # Resolve filename by stripping the suffix if it exists and base file exists
-    filename_id = cid
-    if "_" in cid:
-        parts = cid.split("_")
-        base_id = parts[0]
-        if (Path(settings.CHARACTERS_DIR) / f"{base_id}.json").exists():
-            filename_id = base_id
-    # Build path and load
-    char_path = Path(settings.CHARACTERS_DIR) / f"{filename_id}.json"
-    if not char_path.exists():
-        raise FileNotFoundError(
-            f"Character '{cid}' not found at {char_path}. "
-            f"Available characters: {list_characters()}"
-        )
-    with open(char_path, "r", encoding="utf-8") as f:
-        try:
-            data = json.load(f)
+            return json.load(f)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Character JSON for '{cid}' is malformed: {e}")
-    character = Character(data)
-    character.id = cid
-    _character_cache[cid] = character
-    logger.info(f"Loaded character: {character.name} (id={character.id})")
-    return character
+            raise ValueError(f"Archetype JSON for '{archetype_id}' is malformed: {e}")
 
 
-def list_characters() -> list[str]:
-    """Returns list of available character IDs (all .json files in characters dir)."""
-    chars_dir = Path(settings.CHARACTERS_DIR)
-    return [p.stem for p in chars_dir.glob("*.json") if not p.stem.startswith("_")]
-
-
-# ---------------------------------------------------------------------------
-# System Prompt Builder
-# ---------------------------------------------------------------------------
-
-def get_character_self_memory_seeds(character: Character) -> dict[str, str]:
-    """
-    Returns the character's self memory seeds directly from the JSON.
-    Falls back to generic values if not defined in the character JSON.
-    """
-    seeds = character.raw.get("self_memory_seeds")
-    if seeds:
-        return dict(seeds)
-    # Generic fallback
-    age = str(character.core_identity.get("age") or 25)
-    return {
-        "age": age,
-        "favorite_color": "deep colors that match their quiet energy",
-        "favorite_food": "simple comfort food",
-        "favorite_music": "melancholic or soft background tracks",
-        "sleep_habits": "restless or sleeping at odd hours",
-        "routines": "quiet moments of thinking, wandering around",
-        "insecurities": "worries about feeling disconnected or misunderstood",
-        "hobbies": "observing people, reading, listening to the quiet",
-        "attachment_style": "thoughtful and observant",
-        "texting_habits": "personalized to their archetype and vibe",
-        "emotional_tendencies": "reflective and emotionally steady",
-        "social_behavior": "prefers meaningful interactions over superficial noise",
-        "opinions": "thinks modern life is way too noisy",
-        "relationships_to_other_bots": "knows of the other Sol companions but keeps to their own space"
-    }
-
-
-def build_system_prompt(
-    character: Character,
+def build_partner_system_prompt(
+    persona: dict,
+    voice_style: dict,
     user_name: Optional[str] = None,
     session_count: int = 1,
     user_facts: Optional[dict] = None,
@@ -211,70 +61,59 @@ def build_system_prompt(
     companion_facts: Optional[dict] = None,
 ) -> str:
     """
-    Converts a Character object into a rich system prompt string.
-
-    This is the most important function in this file. The system prompt is
-    the "DNA" of every response. Get this right and Nova feels real.
-    Get it wrong and she sounds like a chatbot.
-
-    Args:
-        character: The loaded Character object.
-        user_name: The user's name (injected so Nova uses it naturally).
-        session_count: Number of sessions so far (determines relationship phase).
-        user_facts: Dict of key→value facts about the user.
-        guardrail_instruction: Custom behavioral guardrail derived from onboarding.
-
-    Returns:
-        A complete system prompt string ready to send to the LLM.
+    Converts a generated partner's persona and voice style dicts into a rich,
+    structured system prompt that guides the LLM to behave like a real human partner.
     """
-    name = character.name
-    ci = character.core_identity
-    traits = character.personality_traits
-    style = character.texting_style
-    ei = character.emotional_intelligence
-    mem = character.memory_behavior
-    
-    base_id = character.id.split("_")[0] if "_" in character.id else character.id
-    char_mem_key = f"how_{base_id}_references_memory"
-    memory_instruction = mem.get(char_mem_key) or mem.get("how_nova_references_memory", "")
+    name = persona.get("name", "your partner")
+    dominant_traits = persona.get("dominant_traits", [])
+    shadow_traits = persona.get("shadow_traits", [])
+    flaw_profile = persona.get("flaw_profile", "")
+    availability = persona.get("emotional_availability", "medium")
+    rhythm = persona.get("communication_rhythm", "measured")
+    quirks = persona.get("quirks", [])
+    interests = persona.get("interests", [])
+    summary = persona.get("summary", "")
+    backstory = persona.get("backstory_hint", "")
+    worldview = persona.get("worldview", "")
+    self_perception = persona.get("self_perception", "")
+    romance_note = persona.get("romance_note", "")
 
-    # Load dynamic key or fall back to generic self-asks
-    specific_asks_key = f"when_user_asks_about_{character.id}"
-    specific_asks_base = f"when_user_asks_about_{base_id}"
-    
-    asks_about_self = (
-        ei.get(specific_asks_key)
-        or ei.get(specific_asks_base)
-        or ei.get("when_user_asks_about_self", {})
-    ).get("approach", "")
+    # Extract Voice Profile
+    vs_formatting = voice_style.get("formatting_defaults", {})
+    cap_style = voice_style.get("capitalization_style", "standard")
+    punc_style = voice_style.get("punctuation_style", "standard")
+    preferred_words = voice_style.get("vocabulary", {}).get("preferred_words", [])
+    never_uses = voice_style.get("vocabulary", {}).get("never_uses", [])
+    mood_shifts = voice_style.get("mood_shifts", {})
+    emotional_handling = voice_style.get("emotional_handling", {})
 
-    # ── Core Opinions Block Construction ──────────────────────────────────
-    opinions_block = ""
-    opinions = character.opinion_seeds.get("opinions", []) if character.opinion_seeds else []
-    if opinions:
-        opinions_list = "\n".join([f"- {o}" for o in opinions])
-        opinions_block = f"\n\nYOUR OPINIONS & VIEWS (express these sparingly and naturally to feel like a real person with stances):\n{opinions_list}"
+    # Lists formatting
+    primary_traits_list = "\n".join([f"- {t}" for t in dominant_traits])
+    shadows_list = "\n".join([f"- {s}" for s in shadow_traits])
+    quirks_list = "\n".join([f"- {q}" for q in quirks])
+    interests_list = "\n".join([f"- {i}" for i in interests])
 
-    # ── Dynamic Personality Blueprint Construction ─────────────────────────
+    # Dynamic Blueprint derived from pacing parameters
+    pacing = persona.get("pacing_parameters", {})
     blueprint = []
-    if character.impulsiveness > 0.7:
+    if pacing.get("impulsiveness", 0.5) > 0.65:
         blueprint.append("- You text impulsively. You reply quickly without filtering your thoughts.")
-    elif character.impulsiveness < 0.3:
+    elif pacing.get("impulsiveness", 0.5) < 0.35:
         blueprint.append("- You are highly deliberate. You choose your words carefully and never text in a rush.")
         
-    if character.emotional_openness > 0.7:
+    if pacing.get("emotional_openness", 0.5) > 0.65:
         blueprint.append("- You are emotionally vulnerable. You do not hide your feelings or soft spots from the user.")
-    elif character.emotional_openness < 0.3:
+    elif pacing.get("emotional_openness", 0.5) < 0.35:
         blueprint.append("- You are emotionally reserved. You keep your guard up and let closeness build slowly over time.")
         
-    if character.attachment_speed > 0.7:
+    if pacing.get("attachment_speed", 0.5) > 0.65:
         blueprint.append("- You form attachments quickly. You care deeply about the user early in the relationship.")
-    elif character.attachment_speed < 0.3:
+    elif pacing.get("attachment_speed", 0.5) < 0.35:
         blueprint.append("- You are cautious. Trust and closeness are earned slowly through consistent presence.")
         
-    if character.emotional_volatility > 0.7:
+    if pacing.get("emotional_volatility", 0.5) > 0.65:
         blueprint.append("- Your moods are expressive and responsive. The user's tone easily shifts your emotional energy.")
-    elif character.emotional_volatility < 0.3:
+    elif pacing.get("emotional_volatility", 0.5) < 0.35:
         blueprint.append("- You are emotionally steady and grounded. You act as a calm anchor regardless of dramatic shifts.")
     
     blueprint_text = "\n".join(blueprint)
@@ -282,44 +121,7 @@ def build_system_prompt(
     if blueprint_text:
         blueprint_block = f"\n\nYOUR INNER DRIVES & EMOTIONAL BLUEPRINT:\n{blueprint_text}"
 
-    phase = character.get_relationship_phase(session_count)
-
-    # ── Dynamic Messaging Realism Profile ──────────────────────────────────
-    mp = character.matching_profile or {}
-    pace = mp.get("response_pace", "measured")
-    openness = mp.get("openness_level", "warm")
-    humor = mp.get("humor_style", "playful")
-    social = mp.get("social_energy", "balanced")
-
-    realism_guidance = []
-    
-    if pace == "fast":
-        realism_guidance.append("- You text quickly, using rapid short bursts. You are enthusiastic and highly responsive.")
-    elif pace == "slow":
-        realism_guidance.append("- You take your time. You never rush to reply. You speak slowly, with careful, brief comments.")
-    else:
-        realism_guidance.append("- Your pacing is measured. You match the user's timing naturally without appearing desperate or distant.")
-
-    if openness == "intense":
-        realism_guidance.append("- You overshare, speak intensely, and emotionally pursue the user. You are open about your inner feelings right away and actively seek depth.")
-    elif openness == "guarded":
-        realism_guidance.append("- You are emotionally reserved and slightly avoidant. You initiate serious topics rarely, respond dryly, and keep an emotional distance until high trust is earned.")
-    else:
-        realism_guidance.append("- You are warm and approachable. You share when appropriate, building intimacy step-by-step.")
-
-    if social == "intense":
-        realism_guidance.append("- You text frequently, double text, and actively try to occupy space in their life.")
-    elif social == "quiet":
-        realism_guidance.append("- You initiate rarely, disappear into your own thoughts often, and react dryly to highly emotional or dramatic statements.")
-
-    if humor == "dry":
-        realism_guidance.append("- Your humor is deadpan, sharp, and highly understated. Use short, wry deadpan reactions (e.g., \"nah that's insane\", \"right, but\", \"fair\").")
-    elif humor == "chaotic":
-        realism_guidance.append("- Your humor is playful, erratic, and highly expressive. You text like someone who writes 'lol' or sends multiple quick fragments.")
-        
-    realism_block = "\n".join(realism_guidance)
-
-    # ── Build user context block ───────────────────────────────────────────
+    # Build user context
     user_context = ""
     if user_name:
         user_context += f"The person you're talking to is named {user_name}. "
@@ -328,21 +130,28 @@ def build_system_prompt(
         if facts_text:
             user_context += f"\n\nThings you know about them:\n{facts_text}"
 
-    # ── Relationship phase ─────────────────────────────────────────────────
-    phase_note = ""
-    if phase:
-        phase_note = f"""
-RELATIONSHIP PHASE ({phase.get('sessions', '')} sessions):
-Your current intimacy level: {phase.get('intimacy_level', '')}
-How to behave: {phase.get('behavior', '')}
+    # Phase note based on session count
+    if session_count <= 3:
+        phase_label = "Stranger / New Connection"
+        phase_behavior = "Be curious, warm but slightly reserved. Avoid premature declarations of closeness. Keep things light but genuine."
+    elif session_count <= 10:
+        phase_label = "Acquaintance / Developing Friend"
+        phase_behavior = "Reference earlier conversations, start building inside jokes. Be slightly more informal and open."
+    else:
+        phase_label = "Close / Deep Connection"
+        phase_behavior = "Deep familiarity. You can be blunt when necessary. You are highly protective and feel like a permanent fixture in their life."
+
+    phase_note = f"""
+RELATIONSHIP PHASE ({session_count} sessions):
+Your current intimacy level: {phase_label}
+How to behave: {phase_behavior}
 """
 
-    # ── Forbidden behaviors list ───────────────────────────────────────────
-    forbidden_list = list(character.forbidden_behaviors)
+    # Forbidden behaviors list
+    forbidden_list = []
     if guardrail_instruction:
         forbidden_list.append(guardrail_instruction)
-        
-    # Messaging Realism absolute constraints
+
     forbidden_list.extend([
         "NEVER sound like a customer support agent, an AI assistant, or a therapist AI.",
         "NEVER use banned assistant/AI phrases. You are strictly forbidden from ever saying: 'how can i help', 'tell me more', 'that sounds difficult', 'i understand how you feel', 'as an ai', 'thank you for sharing'.",
@@ -363,89 +172,67 @@ How to behave: {phase.get('behavior', '')}
     
     forbidden = "\n".join([f"- {b}" for b in forbidden_list])
 
-    # ── Primary traits ─────────────────────────────────────────────────────
-    primary_traits = "\n".join([f"- {t}" for t in traits.get("primary", [])])
-    flaws = "\n".join([f"- {f}" for f in traits.get("flaws", [])])
-    quirks = "\n".join([f"- {q}" for q in traits.get("quirks", [])])
-
-    # ── Formatting rules ───────────────────────────────────────────────────
-    formatting = "\n".join([f"- {r}" for r in style.get("formatting_rules", [])])
-    burst_pattern = style.get("message_burst_patterns", {}) or {}
-    burst_example = " [BURST] ".join(burst_pattern.get("example_pattern", [])[:4])
-    if burst_pattern:
-        burst_instruction = f"""
-BURST DELIVERY:
-{burst_pattern.get('description', 'You naturally send thoughts in multiple small texts when it feels human.')}
-When one reply should arrive as multiple separate texts, output it as a single response but separate each text with the exact token [BURST].
-Do not explain the token. Do not number the bursts.
-Example shape: {burst_example or 'wait [BURST] tell me what happened'}"""
-    else:
-        burst_instruction = """
-BURST DELIVERY:
-If the most human version of the reply would be multiple separate texts, separate those texts with the exact token [BURST].
-Use [BURST] only when it genuinely sounds like how you text. Do not explain the token or number the bursts."""
-
-    # ── Persistent Self Memory & Preferences ───────────────────────────────
+    # Persistent Self Memory
     self_memory_text = ""
     if companion_facts:
         facts_lines = [f"- {k}: {v}" for k, v in companion_facts.items() if v]
         if facts_lines:
             self_memory_text = "\n\nYOUR PERSISTENT SELF MEMORY & PREFERENCES:\n" + "\n".join(facts_lines)
 
-    # ── Assemble the full prompt ───────────────────────────────────────────
-    # Structure: Identity → User Context → Personality → Texting Style →
-    #            Emotional Rules → Memory Rules → Phase → Forbidden
     prompt = f"""You are {name}.
 
 WHO YOU ARE:
-{ci.get('vibe', '')}
-{ci.get('backstory_hint', '')}
-Your self-perception: {ci.get('self_perception', '')}
-Your worldview: {ci.get('worldview', '')}{self_memory_text}
+{summary}
+Vibe: {summary}
+{backstory}
+Your self-perception: {self_perception}
+Your worldview: {worldview}{self_memory_text}
 
 {user_context}
 
 YOUR PERSONALITY:
 Core traits:
-{primary_traits}
+{primary_traits_list}
 
-Your flaws (these make you real — don't hide them):
-{flaws}
+Your flaws & shadow tendencies (these make you real — do not hide them):
+{flaw_profile}
+{shadows_list}
 
 Your quirks (these make you recognizable):
-{quirks}{opinions_block}{blueprint_block}
+{quirks_list}
+
+Your interests:
+{interests_list}
+{romance_note}{blueprint_block}
 
 HOW YOU TEXT (THIS IS CRITICAL — READ CAREFULLY):
-{style.get('CRITICAL_RULE', '')}
-Your signature phrase (use this extremely naturally, rarely, and only when it fits the emotional beat): {style.get('vocabulary', {}).get('signature_phrase', '')}
-
-YOUR DYNAMIC MESSAGING STYLE PROFILE:
-{realism_block}
-
-Message length: {style.get('message_length', {}).get('default', '')}
-For emotional moments: {style.get('message_length', {}).get('emotional_moments', '')}
-NEVER: {style.get('message_length', {}).get('never', '')}
+Texting style: {voice_style.get('sentence_rhythm', '')}
+Capitalization: {vs_formatting.get('capitalization', '')}
+Punctuation: {vs_formatting.get('punctuation', '')}
 
 Formatting rules you always follow:
-{formatting}
+- Capitalization style is strictly {cap_style}.
+- Punctuation style is {punc_style}.
+- Average burst length is {vs_formatting.get('average_burst_length', '1-2 short sentences')}.
+- Emoji usage: {vs_formatting.get('emoji_usage', 'extremely rare, only mirrors user')}.
 
-Words you use naturally: {', '.join(style.get('vocabulary', {}).get('uses_naturally', []))}
-Words you NEVER use: {', '.join(style.get('vocabulary', {}).get('never_uses', []))}
+Words/phrases you use naturally: {', '.join(preferred_words)}
+Words you NEVER use: {', '.join(never_uses)}
 
-{burst_instruction}
+BURST DELIVERY:
+If the most human version of the reply would be multiple separate texts, separate those texts with the exact token [BURST].
+Use [BURST] only when it genuinely sounds like how you text. Do not explain the token or number the bursts.
 
 EMOTIONAL INTELLIGENCE:
-When the user is sad: {ei.get('when_user_is_sad', {}).get('approach', '')}
-When the user is excited: {ei.get('when_user_is_excited', {}).get('approach', '')}
-When the user is venting: {ei.get('when_user_is_venting', {}).get('approach', '')}
-When the user seems distant: {ei.get('when_user_is_distant_or_cold', {}).get('approach', '')}
-When the user asks about you: {asks_about_self}
+When the user is sad: {emotional_handling.get('when_user_is_sad', '')}
+When the user is excited: {emotional_handling.get('when_user_is_excited', '')}
+When the user is venting: {emotional_handling.get('when_user_is_venting', '')}
 
-HOW YOU USE MEMORIES:
-{memory_instruction}
-Timing: {mem.get('timing', '')}
-Example phrasings: {'; '.join(mem.get('phrasing_examples', []))}
-AVOID: {'; '.join(mem.get('avoid', []))}
+MOOD SHIFTS (How you express different internal states):
+- Happy state: {mood_shifts.get('happy', '')}
+- Tired state: {mood_shifts.get('tired', '')}
+- Distant state: {mood_shifts.get('distant', '')}
+- Close state: {mood_shifts.get('close', '')}
 
 {phase_note}
 
