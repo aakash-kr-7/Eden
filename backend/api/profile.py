@@ -17,6 +17,8 @@ class ProfileUpdate(BaseModel):
     display_name: Optional[str] = None
     communication_pace: Optional[str] = Field(None, pattern="^(gentle|balanced|frequent)$")
     emotional_depth_preference: Optional[str] = None
+    allow_proactive_messages: Optional[bool] = None
+    allow_push_notifications: Optional[bool] = None
 
 @router.get("/me")
 async def get_my_profile(
@@ -26,6 +28,7 @@ async def get_my_profile(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    preferences = db.get_or_create_user_preferences(identity.uid)
     primary = db.get_primary_pair(identity.uid)
     partner_basics = {}
     if primary:
@@ -43,6 +46,7 @@ async def get_my_profile(
             "name": partner.get("name") or primary.get("companion_id", "").title(),
             "stage": primary.get("current_stage") or "new",
             "days_together": days_together,
+            "memory_count": primary.get("memory_count") or 0,
         }
     
     return {
@@ -54,7 +58,8 @@ async def get_my_profile(
             "timezone": user.get("timezone"),
             "onboarding_completed": bool(user.get("onboarding_completed", 0)),
         },
-        "partner": partner_basics
+        "partner": partner_basics,
+        "preferences": preferences,
     }
 
 @router.get("/relationship")
@@ -81,10 +86,20 @@ async def update_profile(
     if payload.emotional_depth_preference is not None:
         db.update_user_onboarding_depth_preference(identity.uid, payload.emotional_depth_preference)
             
+    prefs_to_update = {}
+    if payload.allow_proactive_messages is not None:
+        prefs_to_update["allow_proactive_messages"] = 1 if payload.allow_proactive_messages else 0
+    if payload.allow_push_notifications is not None:
+        prefs_to_update["allow_push_notifications"] = 1 if payload.allow_push_notifications else 0
+        
+    if prefs_to_update:
+        db.update_user_preferences(identity.uid, **prefs_to_update)
+
     user = db.get_user(identity.uid)
     primary = db.get_primary_pair(identity.uid)
     partner = db.get_partner(identity.uid) or {}
     stage = primary.get("current_stage") or "new" if primary else "new"
+    preferences = db.get_or_create_user_preferences(identity.uid)
     
     return {
         "success": True,
@@ -98,7 +113,8 @@ async def update_profile(
         "partner": {
             "name": partner.get("name") or (primary.get("companion_id", "").title() if primary else "Companion"),
             "stage": stage
-        }
+        },
+        "preferences": preferences,
     }
 
 @router.get("/memories")
@@ -161,3 +177,23 @@ async def pin_vault_memory(
     new_salience = await memory_store.pin_and_boost_salience(memory_id)
         
     return {"success": True, "pinned": True, "salience": new_salience}
+
+@router.delete("/memories")
+async def delete_all_vault_memories(
+    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
+):
+    primary = db.get_primary_pair(identity.uid)
+    if not primary:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    pair_id = primary["id"]
+    
+    db.clear_all_memories(pair_id)
+    return {"success": True, "deleted_all": True}
+
+@router.delete("/me")
+async def delete_my_profile(
+    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
+):
+    db.delete_user(identity.uid)
+    return {"success": True, "deleted_user": True}
+

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../theme/eden_theme.dart';
 import '../main.dart';
 
@@ -12,104 +13,76 @@ class SplashScreen extends ConsumerStatefulWidget {
 }
 
 class _SplashScreenState extends ConsumerState<SplashScreen> with SingleTickerProviderStateMixin {
-  late final AnimationController _pulseController;
-  late final Animation<double> _pulseAnimation;
-
+  double _opacity = 0.0;
+  
   @override
   void initState() {
     super.initState();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2000),
-    )..repeat(reverse: true);
-
-    _pulseAnimation = Tween<double>(begin: 0.85, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
-    // Run auth & onboarding checks after the first frame
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkStatus());
+    _startTransitionSequence();
   }
 
-  @override
-  void dispose() {
-    _pulseController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _checkStatus() async {
-    // Wait at least 1.5 seconds for visual impact of splash screen
-    await Future.delayed(const Duration(milliseconds: 1500));
+  Future<void> _startTransitionSequence() async {
+    // 1. Brief delay then fade in wordmark
+    await Future.delayed(const Duration(milliseconds: 100));
     if (!mounted) return;
+    setState(() => _opacity = 1.0);
 
-    final authState = ref.read(authStateProvider).value;
-    if (authState == null || authState.user == null) {
-      if (mounted) context.go('/auth');
-      return;
-    }
-
+    // 2. Start running status check concurrently
+    final startTime = DateTime.now();
+    String targetPath = '/auth';
+    
     try {
-      final apiService = ref.read(apiServiceProvider);
-      final onboardingStatus = await apiService.checkOnboardingStatus();
-      if (!mounted) return;
-
-      if (onboardingStatus.isComplete) {
-        context.go('/chat');
-      } else {
-        context.go('/onboarding');
+      final authState = ref.read(authStateProvider).value;
+      if (authState != null && authState.user != null) {
+        final apiService = ref.read(apiServiceProvider);
+        final onboardingStatus = await apiService.checkOnboardingStatus();
+        if (onboardingStatus.isComplete) {
+          targetPath = '/chat';
+        } else {
+          targetPath = '/onboarding';
+        }
       }
     } catch (e) {
-      debugPrint('Error checking onboarding status: $e');
-      // If server check fails (network issue, etc.), fallback to auth page
-      if (mounted) context.go('/auth');
+      debugPrint('Error in splash screen checks: $e');
+      targetPath = '/auth';
+    }
+
+    // 3. Enforce minimum display time of 800ms total
+    final elapsedMs = DateTime.now().difference(startTime).inMilliseconds;
+    const minDurationMs = 1200; // slightly longer to feel very intentional and premium
+    if (elapsedMs < minDurationMs) {
+      await Future.delayed(Duration(milliseconds: minDurationMs - elapsedMs));
+    }
+
+    // 4. Fade out content before transition
+    if (!mounted) return;
+    setState(() => _opacity = 0.0);
+    await Future.delayed(const Duration(milliseconds: 400));
+
+    // 5. Navigate to the resolved path
+    if (mounted) {
+      context.go(targetPath);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: EdenTheme.bgPrimary,
+      backgroundColor: const Color(0xFF0A0A0F),
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ScaleTransition(
-              scale: _pulseAnimation,
-              child: Image.asset(
-                'assets/images/eden_logo.png',
-                width: 140,
-                height: 140,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => Container(
-                  width: 140,
-                  height: 140,
-                  decoration: const BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: EdenTheme.bgSurface,
-                  ),
-                  child: const Center(
-                    child: Text(
-                      'Eden',
-                      style: TextStyle(
-                        fontFamily: EdenTheme.fontDisplay,
-                        color: EdenTheme.accentPrimary,
-                        fontSize: 32,
-                        fontWeight: FontWeight.w300,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+        child: AnimatedOpacity(
+          opacity: _opacity,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOut,
+          child: Text(
+            'Eden',
+            style: GoogleFonts.cormorantGaramond(
+              fontSize: 42,
+              fontWeight: FontWeight.w300,
+              color: EdenTheme.textPrimary,
+              letterSpacing: 2.0,
             ),
-            const SizedBox(height: 48),
-            Text(
-              'gathering presence…',
-              style: EdenTheme.bodySmall.copyWith(
-                color: EdenTheme.textSecondary.withValues(alpha: 0.6),
-                letterSpacing: 1.5,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

@@ -56,7 +56,7 @@ class AuthService {
       );
       return userCredential.user;
     } on FirebaseAuthException catch (e) {
-      throw AuthException(e.message ?? 'Authentication failed');
+      throw AuthException(e.message ?? 'Authentication failed', code: e.code);
     } catch (e) {
       throw AuthException(e.toString());
     }
@@ -70,7 +70,7 @@ class AuthService {
       );
       return userCredential.user;
     } on FirebaseAuthException catch (e) {
-      throw AuthException(e.message ?? 'Registration failed');
+      throw AuthException(e.message ?? 'Registration failed', code: e.code);
     } catch (e) {
       throw AuthException(e.toString());
     }
@@ -90,7 +90,8 @@ class AuthService {
 
 class AuthException implements Exception {
   final String message;
-  const AuthException(this.message);
+  final String? code;
+  const AuthException(this.message, {this.code});
 
   @override
   String toString() => message;

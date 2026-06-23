@@ -315,6 +315,57 @@ class ApiService {
       throw ApiException('Failed to register device token: ${response.body}', response.statusCode);
     }
   }
+
+  Future<void> deleteAllMemories() async {
+    final response = await _requestWithRetry('DELETE', '/api/profile/memories');
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to delete all memories: ${response.body}', response.statusCode);
+    }
+  }
+
+  Future<void> deleteAccount() async {
+    final response = await _requestWithRetry('DELETE', '/api/profile/me');
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to delete account: ${response.body}', response.statusCode);
+    }
+  }
+
+  Future<Map<String, dynamic>> exportData(String userId) async {
+    final response = await _requestWithRetry('GET', '/api/ops/export/$userId');
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to export data: ${response.body}', response.statusCode);
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<void> updateProfile({
+    String? displayName,
+    String? communicationPace,
+    bool? allowProactive,
+    bool? allowPush,
+  }) async {
+    final response = await _requestWithRetry(
+      'PATCH',
+      '/api/profile/me',
+      body: {
+        if (displayName != null) 'display_name': displayName,
+        if (communicationPace != null) 'communication_pace': communicationPace,
+        if (allowProactive != null) 'allow_proactive_messages': allowProactive,
+        if (allowPush != null) 'allow_push_notifications': allowPush,
+      },
+    );
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to update profile: ${response.body}', response.statusCode);
+    }
+  }
+
+  Future<Map<String, dynamic>> getProfile() async {
+    final response = await _requestWithRetry('GET', '/api/profile/me');
+    if (response.statusCode != 200) {
+      throw ApiException('Failed to get profile: ${response.body}', response.statusCode);
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
 }
 
 class ApiException implements Exception {

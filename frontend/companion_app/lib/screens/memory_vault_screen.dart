@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../theme/eden_theme.dart';
-import '../services/biometric_service.dart';
 import '../models/models.dart';
 import '../main.dart';
 
@@ -14,57 +14,90 @@ class MemoryVaultScreen extends ConsumerStatefulWidget {
   ConsumerState<MemoryVaultScreen> createState() => _MemoryVaultScreenState();
 }
 
-class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
+class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with SingleTickerProviderStateMixin {
   final List<Memory> _memories = [];
   bool _isLoading = true;
-  bool _isLocked = false;
-  String _pinInput = '';
   String? _errorMessage;
+  String? _partnerName;
 
-  String _selectedType = 'all';
-  String _selectedSort = 'recent'; // 'recent' | 'salience'
+  String _selectedCategory = 'All';
+
+  final List<String> _categories = [
+    'All',
+    'Feelings',
+    'Facts',
+    'Events',
+    'Preferences',
+    'Struggles',
+    'Growth',
+    'Rituals',
+    'Jokes'
+  ];
+
+  late final AnimationController _shimmerController;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkVaultLock());
+    _shimmerController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeScreen());
   }
 
-  Future<void> _checkVaultLock() async {
-    final enabled = await BiometricService.isVaultEnabled();
-    if (!enabled) {
-      _loadMemories();
-      return;
-    }
+  @override
+  void dispose() {
+    _shimmerController.dispose();
+    super.dispose();
+  }
 
-    // Try native biometrics first
-    final canBio = await BiometricService.canAuthenticate();
-    if (canBio) {
-      final success = await BiometricService.authenticate();
-      if (success) {
-        _loadMemories();
-        return;
+  Future<void> _initializeScreen() async {
+    await _loadPartnerName();
+    await _loadMemories();
+  }
+
+  Future<void> _loadPartnerName() async {
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      final profile = await apiService.getProfile();
+      if (mounted) {
+        setState(() {
+          _partnerName = profile['partner']?['name'] ?? 'Companion';
+        });
       }
+    } catch (e) {
+      debugPrint('Failed to load partner details: $e');
     }
-
-    // Fallback to PIN keypad lock state
-    setState(() {
-      _isLocked = true;
-      _isLoading = false;
-    });
   }
 
   Future<void> _loadMemories() async {
     setState(() {
       _isLoading = true;
-      _isLocked = false;
       _errorMessage = null;
     });
 
     try {
       final apiService = ref.read(apiServiceProvider);
-      final typeFilter = _selectedType == 'all' ? null : _selectedType;
-      final list = await apiService.getMemories(type: typeFilter, sort: _selectedSort);
+      // Map category labels to types expected by API
+      String? backendType;
+      if (_selectedCategory != 'All') {
+        // Map singular lowercase forms
+        final map = {
+          'Feelings': 'feeling',
+          'Facts': 'fact',
+          'Events': 'event',
+          'Preferences': 'preference',
+          'Struggles': 'struggle',
+          'Growth': 'growth',
+          'Rituals': 'ritual',
+          'Jokes': 'joke',
+        };
+        backendType = map[_selectedCategory];
+      }
+
+      final list = await apiService.getMemories(type: backendType, sort: 'recent');
       
       if (mounted) {
         setState(() {
@@ -77,58 +110,48 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = 'failed to load memories. try again.';
+          _errorMessage = 'failed to retrieve memories';
         });
       }
-    }
-  }
-
-  Future<void> _handlePinKeyPress(String digit) async {
-    HapticFeedback.lightImpact();
-    if (_pinInput.length >= 4) return;
-
-    setState(() {
-      _pinInput += digit;
-    });
-
-    if (_pinInput.length == 4) {
-      final correct = await BiometricService.verifyVaultPin(_pinInput);
-      if (correct) {
-        _loadMemories();
-      } else {
-        HapticFeedback.heavyImpact();
-        setState(() {
-          _pinInput = '';
-          _errorMessage = 'Incorrect PIN. Try again.';
-        });
-      }
-    }
-  }
-
-  void _handlePinBackspace() {
-    if (_pinInput.isNotEmpty) {
-      HapticFeedback.lightImpact();
-      setState(() {
-        _pinInput = _pinInput.substring(0, _pinInput.length - 1);
-        _errorMessage = null;
-      });
     }
   }
 
   Future<void> _togglePin(Memory memory) async {
     HapticFeedback.lightImpact();
+    
+    // Optimistic UI update
+    final int idx = _memories.indexWhere((m) => m.id == memory.id);
+    if (idx == -1) return;
+
+    final originalSalience = memory.salience;
+    // Pinned status is inferred from salience > 0.9 or can be set directly.
+    final updatedMemory = Memory(
+      id: memory.id,
+      content: memory.content,
+      memoryType: memory.memoryType,
+      // If currently pinned, lower salience to unpin; if not, raise it to pin.
+      salience: originalSalience > 0.9 ? 0.5 : 1.0,
+      emotionalValence: memory.emotionalValence,
+      tags: memory.tags,
+      isPhysical: memory.isPhysical,
+      createdAt: memory.createdAt,
+    );
+
+    setState(() {
+      _memories[idx] = updatedMemory;
+    });
+
     try {
       final apiService = ref.read(apiServiceProvider);
       await apiService.pinMemory(memory.id);
+      // Reload to ensure DB state matches
       _loadMemories();
     } catch (e) {
+      // Revert on error
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to pin memory: $e'),
-            backgroundColor: EdenTheme.destructive,
-          ),
-        );
+        setState(() {
+          _memories[idx] = memory;
+        });
       }
     }
   }
@@ -136,41 +159,118 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
   Future<void> _deleteMemory(Memory memory) async {
     HapticFeedback.mediumImpact();
     
-    final bool? confirm = await showDialog<bool>(
+    final bool? confirm = await showGeneralDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: EdenTheme.bgSurface,
-        title: const Text('Delete Memory', style: EdenTheme.displaySmall),
-        content: const Text(
-          'Are you sure you want to forget this? This cannot be undone.',
-          style: EdenTheme.bodyMedium,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text('Cancel', style: EdenTheme.bodyMedium.copyWith(color: EdenTheme.textSecondary)),
+      barrierDismissible: true,
+      barrierLabel: 'confirm_delete',
+      barrierColor: Colors.black.withValues(alpha: 0.7),
+      transitionDuration: const Duration(milliseconds: 250),
+      pageBuilder: (context, anim1, anim2) {
+        return Center(
+          child: ScaleTransition(
+            scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
+            child: Dialog(
+              backgroundColor: EdenTheme.bgSurface,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Forget this memory?',
+                      style: GoogleFonts.cormorantGaramond(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w400,
+                        color: EdenTheme.textPrimary,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'This moment will disappear from their presence and context forever.',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 14,
+                        color: EdenTheme.textSecondary,
+                        height: 1.45,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 28),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () => Navigator.of(context).pop(false),
+                            child: Text(
+                              'Keep',
+                              style: GoogleFonts.jost(
+                                fontSize: 15,
+                                color: EdenTheme.textSecondary,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Material(
+                              color: EdenTheme.destructive.withValues(alpha: 0.15),
+                              child: InkWell(
+                                onTap: () => Navigator.of(context).pop(true),
+                                child: Container(
+                                  height: 48,
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: EdenTheme.destructive.withValues(alpha: 0.3), width: 0.8),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      'Forget',
+                                      style: GoogleFonts.jost(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500,
+                                        color: EdenTheme.destructive,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text('Forget', style: EdenTheme.bodyMedium.copyWith(color: EdenTheme.destructive)),
-          ),
-        ],
-      ),
+        );
+      },
     );
 
     if (confirm != true) return;
 
+    // Optimistic UI delete
+    final originalIdx = _memories.indexWhere((m) => m.id == memory.id);
+    if (originalIdx != -1) {
+      setState(() {
+        _memories.removeAt(originalIdx);
+      });
+    }
+
     try {
       final apiService = ref.read(apiServiceProvider);
       await apiService.deleteMemory(memory.id);
-      
-      if (mounted) {
-        setState(() {
-          _memories.removeWhere((m) => m.id == memory.id);
-        });
-      }
     } catch (e) {
-      if (mounted) {
+      // Revert optimistic delete on error
+      if (mounted && originalIdx != -1) {
+        _loadMemories();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to forget memory: $e'),
@@ -183,111 +283,44 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLocked) {
-      return _buildKeypadLockScreen();
-    }
+    final titleName = _partnerName ?? 'Companion';
 
     return Scaffold(
-      backgroundColor: EdenTheme.bgPrimary,
+      backgroundColor: const Color(0xFF0A0A0F),
       appBar: AppBar(
-        title: const Text('Memory Vault'),
-        centerTitle: true,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 18),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 16),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
       body: SafeArea(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildFiltersAndSorting(),
-            Expanded(child: _buildMemoriesList()),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildKeypadLockScreen() {
-    return Scaffold(
-      backgroundColor: EdenTheme.bgPrimary,
-      body: SafeArea(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.lock_outline_rounded, size: 48, color: EdenTheme.accentPrimary),
-            const SizedBox(height: 24),
-            const Text(
-              'Vault Locked',
-              style: EdenTheme.displaySmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Enter your 4-digit PIN to access memories.',
-              style: EdenTheme.bodyMedium.copyWith(color: EdenTheme.textSecondary),
-            ),
-            const SizedBox(height: 36),
-            // Pin indicators
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(4, (index) {
-                final hasDigit = index < _pinInput.length;
-                return Container(
-                  width: 14,
-                  height: 14,
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: hasDigit ? EdenTheme.accentPrimary : Colors.transparent,
-                    border: Border.all(color: EdenTheme.accentPrimary, width: 1.5),
-                  ),
-                );
-              }),
-            ),
-            const SizedBox(height: 48),
-            if (_errorMessage != null) ...[
-              Text(
-                _errorMessage!,
-                style: EdenTheme.bodySmall.copyWith(color: EdenTheme.destructive),
-              ),
-              const SizedBox(height: 24),
-            ],
-            // Keypad
+            // Intimate Header
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 48.0),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: ['1', '2', '3'].map((d) => _buildKeypadButton(d)).toList(),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: ['4', '5', '6'].map((d) => _buildKeypadButton(d)).toList(),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: ['7', '8', '9'].map((d) => _buildKeypadButton(d)).toList(),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Back to previous screen
-                      IconButton(
-                        icon: const Icon(Icons.arrow_back_ios_new_rounded, color: EdenTheme.textSecondary),
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
-                      _buildKeypadButton('0'),
-                      IconButton(
-                        icon: const Icon(Icons.backspace_outlined, color: EdenTheme.textSecondary),
-                        onPressed: _handlePinBackspace,
-                      ),
-                    ],
-                  ),
-                ],
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              child: Text(
+                'What $titleName remembers',
+                style: GoogleFonts.cormorantGaramond(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w300,
+                  color: EdenTheme.textPrimary,
+                  letterSpacing: -0.2,
+                ),
+              ),
+            ),
+
+            // Horizontal Category Filter Row
+            _buildCategoryRow(),
+
+            // Memory Content Area
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
+                child: _buildMainContent(),
               ),
             ),
           ],
@@ -296,208 +329,295 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
     );
   }
 
-  Widget _buildKeypadButton(String digit) {
-    return GestureDetector(
-      onTap: () => _handlePinKeyPress(digit),
-      child: Container(
-        width: 64,
-        height: 64,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: EdenTheme.bgSurface,
-          border: Border.all(color: EdenTheme.textSecondary.withValues(alpha: 0.08)),
-        ),
-        child: Center(
-          child: Text(
-            digit,
-            style: EdenTheme.displaySmall,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFiltersAndSorting() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 12.0),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              _buildFilterChip('all', 'All'),
-              const SizedBox(width: 8),
-              _buildFilterChip('fact', 'Facts'),
-              const SizedBox(width: 8),
-              _buildFilterChip('feeling', 'Feelings'),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                '${_memories.length} moments remembered',
-                style: EdenTheme.bodySmall.copyWith(color: EdenTheme.textSecondary),
+  Widget _buildCategoryRow() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Row(
+        children: _categories.map((cat) {
+          final isSelected = _selectedCategory == cat;
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6.0),
+            child: GestureDetector(
+              onTap: () {
+                if (_selectedCategory != cat) {
+                  HapticFeedback.selectionClick();
+                  setState(() {
+                    _selectedCategory = cat;
+                  });
+                  _loadMemories();
+                }
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isSelected ? EdenTheme.bgSurface : Colors.transparent,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isSelected ? EdenTheme.textPrimary.withValues(alpha: 0.08) : Colors.transparent,
+                    width: 0.8,
+                  ),
+                ),
+                child: Text(
+                  cat,
+                  style: GoogleFonts.jost(
+                    fontSize: 14,
+                    fontWeight: isSelected ? FontWeight.w500 : FontWeight.w300,
+                    color: isSelected ? EdenTheme.textPrimary : EdenTheme.textSecondary.withValues(alpha: 0.7),
+                    letterSpacing: 0.3,
+                  ),
+                ),
               ),
-              DropdownButton<String>(
-                value: _selectedSort,
-                dropdownColor: EdenTheme.bgSurface,
-                underline: const SizedBox(),
-                icon: const Icon(Icons.swap_vert_rounded, size: 16, color: EdenTheme.accentSecondary),
-                style: EdenTheme.bodySmall.copyWith(color: EdenTheme.accentSecondary, fontWeight: FontWeight.bold),
-                items: const [
-                  DropdownMenuItem(value: 'recent', child: Text('Sort by Recent')),
-                  DropdownMenuItem(value: 'salience', child: Text('Sort by Salience')),
-                ],
-                onChanged: (val) {
-                  if (val != null) {
-                    setState(() => _selectedSort = val);
-                    _loadMemories();
-                  }
-                },
-              ),
-            ],
-          ),
-        ],
+            ),
+          );
+        }).toList(),
       ),
     );
   }
 
-  Widget _buildFilterChip(String value, String label) {
-    final bool isSelected = _selectedType == value;
-    return GestureDetector(
-      onTap: () {
-        setState(() => _selectedType = value);
-        _loadMemories();
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? EdenTheme.accentPrimary : EdenTheme.bgSurface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? EdenTheme.accentPrimary : EdenTheme.textSecondary.withValues(alpha: 0.12),
-          ),
-        ),
-        child: Text(
-          label,
-          style: EdenTheme.bodySmall.copyWith(
-            color: isSelected ? EdenTheme.bgPrimary : EdenTheme.textPrimary,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMemoriesList() {
+  Widget _buildMainContent() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation(EdenTheme.accentPrimary)),
-      );
+      return _buildSkeletonLoader();
     }
 
     if (_errorMessage != null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(_errorMessage!, style: EdenTheme.bodyMedium.copyWith(color: EdenTheme.destructive)),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _loadMemories,
-              style: ElevatedButton.styleFrom(backgroundColor: EdenTheme.accentPrimary),
-              child: const Text('Retry', style: TextStyle(color: EdenTheme.bgPrimary)),
-            )
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _errorMessage!,
+                style: GoogleFonts.plusJakartaSans(color: EdenTheme.destructive, fontSize: 15),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: _initializeScreen,
+                child: Text(
+                  'retry',
+                  style: GoogleFonts.jost(color: EdenTheme.accentSecondary, letterSpacing: 1.0),
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
 
     if (_memories.isEmpty) {
       return Center(
-        child: Text(
-          'no memories recorded yet.\nkeep talking to build your shared vault.',
-          textAlign: TextAlign.center,
-          style: EdenTheme.bodyMedium.copyWith(color: EdenTheme.textSecondary, fontStyle: FontStyle.italic),
+        key: const ValueKey('empty_vault'),
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Text(
+            'Nothing here yet. Memories appear as your relationship grows.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.cormorantGaramond(
+              fontSize: 18,
+              fontWeight: FontWeight.w300,
+              color: EdenTheme.textSecondary.withValues(alpha: 0.65),
+              height: 1.45,
+            ),
+          ),
         ),
       );
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+      key: ValueKey('memory_list_$_selectedCategory'),
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
       itemCount: _memories.length,
       itemBuilder: (context, index) {
         final memory = _memories[index];
-        final formattedDate = DateFormat('MMM d, y').format(memory.createdAt);
-        final bool isPinned = memory.salience > 0.9;
+        return _buildMemoryCard(memory);
+      },
+    );
+  }
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 14),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: EdenTheme.bgSurface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: EdenTheme.textSecondary.withValues(alpha: 0.08), width: 0.6),
+  Widget _buildMemoryCard(Memory memory) {
+    final formattedDate = DateFormat('MMMM d, y').format(memory.createdAt);
+    final isPinned = memory.salience > 0.9;
+
+    return Dismissible(
+      key: Key(memory.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 24),
+        decoration: BoxDecoration(
+          color: EdenTheme.destructive.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Icon(
+          Icons.delete_outline_rounded,
+          color: EdenTheme.destructive,
+          size: 22,
+        ),
+      ),
+      confirmDismiss: (direction) async {
+        await _deleteMemory(memory);
+        return false; // Let the state handling inside _deleteMemory remove the item if confirmed
+      },
+      child: GestureDetector(
+        onLongPress: () => _togglePin(memory),
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 20),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: const BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: Color(0x0F8A8799), // extremely subtle bottom divider line instead of outer card borders
+                width: 0.8,
+              ),
+            ),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: EdenTheme.bgElevated,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      memory.memoryType.toUpperCase(),
-                      style: EdenTheme.labelSmall.copyWith(fontSize: 8, color: EdenTheme.accentSecondary),
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: Icon(
-                          isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                          size: 16,
-                          color: isPinned ? EdenTheme.accentPrimary : EdenTheme.textSecondary,
-                        ),
-                        onPressed: () => _togglePin(memory),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline_rounded, size: 16, color: EdenTheme.textSecondary),
-                        onPressed: () => _deleteMemory(memory),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
+              // Memory text
               Text(
                 memory.content,
-                style: EdenTheme.bodyMedium,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w400,
+                  color: EdenTheme.textPrimary.withValues(alpha: 0.9),
+                  height: 1.48,
+                ),
               ),
               const SizedBox(height: 12),
+              
+              // Meta Row
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  // Type label in text-tertiary
+                  Text(
+                    memory.memoryType.toLowerCase(),
+                    style: GoogleFonts.jost(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w400,
+                      color: EdenTheme.textTertiary,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  
+                  const SizedBox(width: 12),
+                  
+                  // Dot separator
+                  Container(
+                    width: 2.5,
+                    height: 2.5,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: EdenTheme.textTertiary,
+                    ),
+                  ),
+                  
+                  const SizedBox(width: 12),
+                  
+                  // Date in text-tertiary
                   Text(
                     formattedDate,
-                    style: EdenTheme.labelSmall,
+                    style: GoogleFonts.jost(
+                      fontSize: 11,
+                      color: EdenTheme.textTertiary,
+                    ),
                   ),
-                  if (memory.tags.isNotEmpty)
-                    Text(
-                      '#${memory.tags.join(" #")}',
-                      style: EdenTheme.labelSmall.copyWith(color: EdenTheme.accentPrimary.withValues(alpha: 0.7)),
+                  
+                  const Spacer(),
+                  
+                  // Pin Dot indicator
+                  if (isPinned)
+                    Container(
+                      width: 5,
+                      height: 5,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: EdenTheme.accentPrimary, // Small Presence Dot
+                      ),
                     ),
                 ],
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkeletonLoader() {
+    return ListView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      itemCount: 4,
+      itemBuilder: (context, index) {
+        return AnimatedBuilder(
+          animation: _shimmerController,
+          builder: (context, child) {
+            final double value = _shimmerController.value;
+            final double opacity = 0.08 + (value * 0.08);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 24),
+              padding: const EdgeInsets.only(bottom: 16),
+              decoration: const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Color(0x0A8A8799),
+                    width: 0.8,
+                  ),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 15,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: EdenTheme.textPrimary.withValues(alpha: opacity),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 15,
+                    width: MediaQuery.of(context).size.width * 0.7,
+                    decoration: BoxDecoration(
+                      color: EdenTheme.textPrimary.withValues(alpha: opacity),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Container(
+                        height: 11,
+                        width: 50,
+                        decoration: BoxDecoration(
+                          color: EdenTheme.textTertiary.withValues(alpha: opacity * 1.5),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Container(
+                        height: 11,
+                        width: 70,
+                        decoration: BoxDecoration(
+                          color: EdenTheme.textTertiary.withValues(alpha: opacity * 1.5),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
     );

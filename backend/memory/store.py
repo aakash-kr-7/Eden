@@ -1175,6 +1175,12 @@ class Database:
             (name, preferred_name, name, display_name, user_id),
         )
 
+    def update_user_display_name(self, user_id: str, display_name: str) -> None:
+        self.conn.execute(
+            "UPDATE users SET display_name = ? WHERE id = ?",
+            (display_name, user_id),
+        )
+
     def save_onboarding_signals(
         self,
         user_id: str,
@@ -1670,6 +1676,12 @@ class Database:
             values,
         )
         return self.get_pair_by_id(pair_id)
+
+    def update_pair_proactive_cadence(self, pair_id: str, cadence: str) -> None:
+        self.conn.execute(
+            "UPDATE relationship_pairs SET proactive_cadence = ?, updated_at = ? WHERE id = ?",
+            (cadence, _utcnow_iso(), pair_id),
+        )
 
     def apply_pair_deltas(
         self,
@@ -4077,6 +4089,50 @@ class Database:
             (conversation_id,),
         ).fetchone()
         return row["emotional_tone"] if row else None
+
+    def clear_all_memories(self, pair_id: str) -> None:
+        with self.transaction():
+            self.conn.execute("DELETE FROM memory_index WHERE pair_id = ?", (pair_id,))
+            self.conn.execute("DELETE FROM user_facts WHERE pair_id = ?", (pair_id,))
+            self.conn.execute("DELETE FROM companion_facts WHERE pair_id = ?", (pair_id,))
+            self.conn.execute("DELETE FROM entities WHERE pair_id = ?", (pair_id,))
+            self.conn.execute("DELETE FROM entity_relationships WHERE pair_id = ?", (pair_id,))
+            self.conn.execute("DELETE FROM behavioral_patterns WHERE pair_id = ?", (pair_id,))
+            self.conn.execute("DELETE FROM narrative_summaries WHERE pair_id = ?", (pair_id,))
+            self.conn.execute("DELETE FROM emotional_events WHERE pair_id = ?", (pair_id,))
+            self.conn.execute("UPDATE relationship_pairs SET memory_count = 0 WHERE id = ?", (pair_id,))
+
+    def delete_user(self, user_id: str) -> None:
+        with self.transaction():
+            self.conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    def export_all_user_data(self, user_id: str) -> dict:
+        user = self.get_user(user_id)
+        if not user:
+            return {}
+        
+        pref = self._row_to_dict(self.conn.execute("SELECT * FROM user_preferences WHERE user_id = ?", (user_id,)).fetchone())
+        pairs = [dict(row) for row in self.conn.execute("SELECT * FROM relationship_pairs WHERE user_id = ?", (user_id,)).fetchall()]
+        conversations = [dict(row) for row in self.conn.execute("SELECT * FROM conversations WHERE user_id = ?", (user_id,)).fetchall()]
+        messages = [dict(row) for row in self.conn.execute("SELECT * FROM messages WHERE user_id = ?", (user_id,)).fetchall()]
+        memories = [dict(row) for row in self.conn.execute("SELECT * FROM memory_index WHERE user_id = ?", (user_id,)).fetchall()]
+        user_facts = [dict(row) for row in self.conn.execute("SELECT * FROM user_facts WHERE user_id = ?", (user_id,)).fetchall()]
+        companion_facts = [dict(row) for row in self.conn.execute("SELECT * FROM companion_facts WHERE user_id = ?", (user_id,)).fetchall()]
+        device_registrations = [dict(row) for row in self.conn.execute("SELECT * FROM device_registrations WHERE user_id = ?", (user_id,)).fetchall()]
+        proactive_events = [dict(row) for row in self.conn.execute("SELECT * FROM proactive_events WHERE user_id = ?", (user_id,)).fetchall()]
+        
+        return {
+            "user": user,
+            "preferences": pref,
+            "relationship_pairs": pairs,
+            "conversations": conversations,
+            "messages": messages,
+            "memories": memories,
+            "user_facts": user_facts,
+            "companion_facts": companion_facts,
+            "device_registrations": device_registrations,
+            "proactive_events": proactive_events,
+        }
 
 
 class MemoryStore:

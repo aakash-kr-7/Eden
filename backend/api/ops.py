@@ -101,3 +101,25 @@ async def run_proactive_job(
                 break
 
     return {"created": created, "count": len(created)}
+
+
+@router.get("/ops/export/{user_id}")
+async def export_user_data(
+    user_id: str,
+    x_admin_token: Optional[str] = Header(default=None),
+    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
+):
+    is_admin = False
+    if settings.DEBUG:
+        is_admin = True
+    elif settings.ADMIN_DEBUG_TOKEN and x_admin_token == settings.ADMIN_DEBUG_TOKEN:
+        is_admin = True
+        
+    if not is_admin and identity.uid != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+        
+    data = db.export_all_user_data(user_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="User not found")
+    return data
+
