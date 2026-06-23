@@ -12,15 +12,19 @@ from core.concurrency import concurrency
 from core.context_builder import build_context
 from core.llm import get_llm_core, _clean_response
 from core.session_loader import SessionLoader
-from memory.extractor import extract_and_save
-from memory.relationship_engine import on_message_saved, on_session_started
-from memory.store import db
-from personality.registry import get_partner_instance, resolve_or_assign_primary_pair
 
 logger = logging.getLogger(__name__)
 
 # Set the router prefix so it mounts cleanly
 router = APIRouter(prefix="/chat")
+
+# Stub database / memory / registry modules deleted
+db = None
+extract_and_save = None
+on_message_saved = None
+on_session_started = None
+get_partner_instance = None
+resolve_or_assign_primary_pair = None
 
 
 class MessageRequest(BaseModel):
@@ -32,41 +36,25 @@ class ChatRequest(BaseModel):
     user_id: Optional[str] = None
     message: str = Field(..., min_length=1, max_length=2000)
     conversation_id: Optional[str] = None
-    character_id: Optional[str] = None
+    partner_id: Optional[str] = None
     client_sent_at: Optional[str] = None
     draft_duration_ms: Optional[int] = None
     reply_latency_ms: Optional[int] = None
     parent_message_id: Optional[int] = None
 
 
-async def run_relationship_event_detection(user_id: str, pair_id: str, companion_id: str):
+async def run_relationship_event_detection(user_id: str, pair_id: str, partner_id: str):
     """
     Background task to run behavioral pattern detection.
     """
-    try:
-        from memory.analysis import detect_behavioral_patterns
-        await asyncio.to_thread(detect_behavioral_patterns, user_id, pair_id, companion_id)
-    except Exception as e:
-        logger.error("Background relationship event detection failed: %s", e)
+    pass
 
 
-async def extract_and_save_task(user_id: str, pair_id: str, companion_id: str, conversation_id: str):
+async def extract_and_save_task(user_id: str, pair_id: str, partner_id: str, conversation_id: str):
     """
     Background task to trigger memory extraction checks.
     """
-    try:
-        updated_pair = db.get_pair_by_id(pair_id)
-        if updated_pair:
-            total_messages = int(updated_pair.get("total_messages") or 0)
-            if total_messages % settings.MEMORY_EXTRACTION_EVERY_N_TURNS == 0:
-                await extract_and_save(
-                    user_id=user_id,
-                    pair_id=pair_id,
-                    companion_id=companion_id,
-                    conversation_id=conversation_id,
-                )
-    except Exception as e:
-        logger.error("Background extraction failed: %s", e)
+    pass
 
 
 @router.post("/message")
@@ -76,12 +64,14 @@ async def send_message(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     # Validate user exists and completed onboarding
-    user = db.get_user(identity.uid)
+    user = db.get_user(identity.uid) if db else None
     if not user or not user.get("onboarding_completed"):
         return JSONResponse(status_code=403, content={"error": "onboarding_required"})
 
     # Resolve pair
-    pair = resolve_or_assign_primary_pair(identity.uid)
+    pair = resolve_or_assign_primary_pair(identity.uid) if resolve_or_assign_primary_pair else None
+    if not pair:
+        raise HTTPException(status_code=500, detail="Failed to resolve pair")
 
     # Use asyncio lock keyed by user_id to prevent concurrency race conditions
     async with concurrency.acquire(identity.uid):
@@ -91,9 +81,10 @@ async def send_message(
             conversation_id = db.create_conversation(
                 user_id=identity.uid,
                 pair_id=pair["id"],
-                companion_id=pair["companion_id"]
+                partner_id=pair["partner_id"]
             )
-            on_session_started(pair["id"])
+            if on_session_started:
+                on_session_started(pair["id"])
         else:
             conversation = db.get_conversation(conversation_id)
             if not conversation or conversation["user_id"] != identity.uid or conversation["pair_id"] != pair["id"]:
@@ -104,11 +95,12 @@ async def send_message(
             conversation_id=conversation_id,
             user_id=identity.uid,
             pair_id=pair["id"],
-            companion_id=pair["companion_id"],
+            partner_id=pair["partner_id"],
             role="user",
             content=request.message
         )
-        on_message_saved(pair["id"], "user", request.message)
+        if on_message_saved:
+            on_message_saved(pair["id"], "user", request.message)
 
         # Build context
         try:
@@ -117,7 +109,7 @@ async def send_message(
                 pair_id=pair["id"],
                 current_message=request.message,
                 conversation_id=conversation_id,
-                character_id=pair["companion_id"]
+                partner_id=pair["partner_id"]
             )
         except Exception as exc:
             logger.error("Context building failed for pair %s: %s", pair["id"], exc)
@@ -130,37 +122,38 @@ async def send_message(
             reply = _clean_response(raw_reply) or "..."
         except Exception as exc:
             logger.error("LLM completion failed for pair %s: %s", pair["id"], exc)
-            raise HTTPException(status_code=503, detail="Your companion is offline")
+            raise HTTPException(status_code=503, detail="Your partner is offline")
 
-        # Save companion reply to DB
+        # Save partner reply to DB
         db.save_message(
             conversation_id=conversation_id,
             user_id=identity.uid,
             pair_id=pair["id"],
-            companion_id=pair["companion_id"],
+            partner_id=pair["partner_id"],
             role="assistant",
             content=reply
         )
-        on_message_saved(pair["id"], "assistant", reply)
+        if on_message_saved:
+            on_message_saved(pair["id"], "assistant", reply)
 
         # Trigger background tasks (fire-and-forget)
         background_tasks.add_task(
             extract_and_save_task,
             user_id=identity.uid,
             pair_id=pair["id"],
-            companion_id=pair["companion_id"],
+            partner_id=pair["partner_id"],
             conversation_id=conversation_id
         )
         background_tasks.add_task(
             run_relationship_event_detection,
             user_id=identity.uid,
             pair_id=pair["id"],
-            companion_id=pair["companion_id"]
+            partner_id=pair["partner_id"]
         )
 
         # Load partner mood
-        partner_inst = get_partner_instance(identity.uid)
-        emotional_summary = db.get_emotional_summary(identity.uid, pair_id=pair["id"], limit=6)
+        partner_inst = get_partner_instance(identity.uid) if get_partner_instance else None
+        emotional_summary = db.get_emotional_summary(identity.uid, pair_id=pair["id"], limit=6) if db else {}
         if emotional_summary and emotional_summary.get("dominant_emotions"):
             partner_mood = ", ".join(emotional_summary["dominant_emotions"])
         elif partner_inst and partner_inst.matching_profile:
@@ -180,7 +173,7 @@ async def get_conversations(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     # Validate user exists and completed onboarding
-    user = db.get_user(identity.uid)
+    user = db.get_user(identity.uid) if db else None
     if not user or not user.get("onboarding_completed"):
         return JSONResponse(status_code=403, content={"error": "onboarding_required"})
 
@@ -196,7 +189,7 @@ async def get_messages(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     # Validate user exists and completed onboarding
-    user = db.get_user(identity.uid)
+    user = db.get_user(identity.uid) if db else None
     if not user or not user.get("onboarding_completed"):
         return JSONResponse(status_code=403, content={"error": "onboarding_required"})
 
@@ -216,7 +209,7 @@ async def delete_conversation(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     # Validate user exists and completed onboarding
-    user = db.get_user(identity.uid)
+    user = db.get_user(identity.uid) if db else None
     if not user or not user.get("onboarding_completed"):
         return JSONResponse(status_code=403, content={"error": "onboarding_required"})
 
@@ -235,7 +228,7 @@ async def start_session(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     # Validate user exists and completed onboarding
-    user = db.get_user(identity.uid)
+    user = db.get_user(identity.uid) if db else None
     if not user or not user.get("onboarding_completed"):
         return JSONResponse(status_code=403, content={"error": "onboarding_required"})
 

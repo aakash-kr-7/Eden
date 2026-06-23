@@ -3,12 +3,49 @@ import hashlib
 import logging
 import json
 
-from personality.loader import list_archetypes, load_archetype
+from pathlib import Path
 from personality.mutator import mutate_persona
 from personality.voice_synthesizer import synthesize_voice
 from core.llm import get_llm_core
 
 logger = logging.getLogger(__name__)
+
+
+def list_archetypes() -> list[dict]:
+    """
+    Scans the archetypes folder and returns a list of dictionaries,
+    each containing at least 'archetype_id'.
+    """
+    archetypes_dir = Path(__file__).parent.resolve() / "archetypes"
+    if not archetypes_dir.exists():
+        logger.warning("Archetypes directory %s does not exist. Creating it.", archetypes_dir)
+        archetypes_dir.mkdir(parents=True, exist_ok=True)
+    
+    results = []
+    for p in archetypes_dir.glob("*.json"):
+        if not p.stem.startswith("_"):
+            results.append({"archetype_id": p.stem})
+    
+    results.sort(key=lambda x: x["archetype_id"])
+    return results
+
+
+def load_archetype(archetype_id: str) -> dict:
+    """
+    Loads a specific archetype JSON file from personality/archetypes/.
+    """
+    archetypes_dir = Path(__file__).parent.resolve() / "archetypes"
+    arch_path = archetypes_dir / f"{archetype_id}.json"
+    
+    if not arch_path.exists():
+        raise FileNotFoundError(f"Archetype '{archetype_id}' not found at {arch_path}.")
+        
+    with open(arch_path, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Archetype JSON for '{archetype_id}' is malformed: {e}")
+
 
 
 def _get_seeded_rng(user_id: str) -> random.Random:
@@ -85,7 +122,7 @@ def _map_user_onboarding(onboarding_data: dict) -> dict:
 
 async def generate_partner(onboarding_data: dict, user_id: str) -> dict:
     """
-    Determines and generates the user's permanent companion partner from onboarding answers.
+    Determines and generates the user's permanent partner from onboarding answers.
     Guarantees absolute determinism per user_id (apart from LLM classification step).
     """
     logger.info("Starting partner generation for user %s", user_id)
@@ -184,7 +221,7 @@ async def generate_partner(onboarding_data: dict, user_id: str) -> dict:
 
 
 class PersonalityGenerator:
-    """Generator class wrapper for companion personalities."""
+    """Generator class wrapper for partner personalities."""
     @classmethod
     async def generate(cls, onboarding_data: dict, user_id: str) -> dict:
         return await generate_partner(onboarding_data, user_id)

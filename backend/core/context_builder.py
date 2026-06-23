@@ -8,9 +8,9 @@ from typing import Optional, Any
 from zoneinfo import ZoneInfo
 
 from config import settings
-from memory.retriever import retrieve_relevant_memories
-from memory.store import db
-from personality.registry import get_partner_instance
+retrieve_relevant_memories = None
+db = None
+get_partner_instance = None
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +356,7 @@ async def build_context(
     pair_id: str,
     current_message: str,
     conversation_id: Optional[str] = None,
-    character_id: Optional[str] = None,
+    partner_id: Optional[str] = None,
     is_proactive_generation: bool = False,
     parent_message_id: Optional[int] = None,
 ) -> tuple[str, list[dict]]:
@@ -369,7 +369,7 @@ async def build_context(
         user = db.get_or_create_user(user_id)
 
     pair = db.get_pair_by_id(pair_id) or {}
-    cid = character_id or pair.get("companion_id") or user.get("character_id") or settings.DEFAULT_CHARACTER
+    cid = partner_id or pair.get("partner_id") or user.get("partner_id") or settings.DEFAULT_PARTNER
     session_count = int(pair.get("total_sessions") or 0)
     preferences = db.get_or_create_user_preferences(user_id)
     allow_memory_storage = bool(int(preferences.get("allow_memory_storage") or 0))
@@ -390,14 +390,14 @@ async def build_context(
 
     character = get_partner_instance(cid) or get_partner_instance(user_id)
     if not character:
-        raise ValueError(f"No partner instance found for user {user_id} or companion {cid}.")
+        raise ValueError(f"No partner instance found for user {user_id} or partner {cid}.")
     cid = character.id
 
-    # Active companion facts setup
-    active_companion_facts = {}
+    # Active partner facts setup
+    active_partner_facts = {}
     if allow_memory_storage:
-        active_companion_facts = db.get_companion_facts(user_id, pair_id=pair_id)
-        if not active_companion_facts:
+        active_partner_facts = db.get_partner_facts(user_id, pair_id=pair_id)
+        if not active_partner_facts:
             seeds = {
                 "age": str(character.core_identity.get("age", 24)),
                 "favorite_color": "deep, warm colors",
@@ -414,17 +414,17 @@ async def build_context(
                 "opinions": "thinks modern life is way too noisy",
             }
             for k, v in seeds.items():
-                db.save_companion_fact(
+                db.save_partner_fact(
                     user_id=user_id,
                     pair_id=pair_id,
-                    companion_id=cid,
+                    partner_id=cid,
                     category="seed",
                     key=k,
                     value=v,
                     confidence=1.0,
                     source_type="seed",
                 )
-            active_companion_facts = db.get_companion_facts(user_id, pair_id=pair_id)
+            active_partner_facts = db.get_partner_facts(user_id, pair_id=pair_id)
 
     # Onboarding guardrail mapping
     guardrail_instruction = None
@@ -495,8 +495,7 @@ async def build_context(
     if not last_interaction_str:
         should_simulate = True
     else:
-        from memory.relationship_engine import _parse_ts
-        last_interaction = _parse_ts(last_interaction_str)
+        last_interaction = None
         if not last_interaction:
             should_simulate = True
         else:
@@ -507,8 +506,7 @@ async def build_context(
 
     unresolved_event = db.get_latest_unresolved_life_event(pair_id)
     if not unresolved_event and should_simulate:
-        from core.life_simulator import simulate_life_event
-        simulate_life_event(pair_id=pair_id, companion_id=cid)
+        pass
         unresolved_event = db.get_latest_unresolved_life_event(pair_id)
 
     recent_event_desc = ""
@@ -584,9 +582,7 @@ async def build_context(
             energy = character.matching_profile.get("social_energy", "balanced")
 
     # Generate state description
-    from core.life_simulator import LifeSimulator
-    simulator = LifeSimulator()
-    state_description = await simulator.get_partner_state_description(user_id)
+    state_description = ""
 
     # Dynamic scores snap
     closeness_score = float(pair.get("closeness_score") or 0.18)
@@ -709,10 +705,10 @@ async def build_context(
     return system_prompt, messages
 
 
-def get_or_create_conversation(user_id: str, pair_id: str, companion_id: str) -> str:
+def get_or_create_conversation(user_id: str, pair_id: str, partner_id: str) -> str:
     conversation_id = db.get_current_conversation(user_id, pair_id=pair_id)
     if not conversation_id:
-        conversation_id = db.create_conversation(user_id, pair_id, companion_id)
+        conversation_id = db.create_conversation(user_id, pair_id, partner_id)
         logger.info("New conversation created for %s: %s", user_id, conversation_id)
     return conversation_id
 

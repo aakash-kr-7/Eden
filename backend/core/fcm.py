@@ -5,7 +5,7 @@
 import logging
 import asyncio
 from firebase_admin import messaging
-from memory.store import db
+db = None
 
 logger = logging.getLogger(__name__)
 

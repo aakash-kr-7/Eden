@@ -10,12 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
-from memory.store import db
 from core.fcm import FCMSender
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+db = None
+_send_push_hooks = None
 
 _ACTIVE_SESSIONS: dict[str, datetime] = {}
 
@@ -68,6 +70,8 @@ async def register_token(
     body: RegisterTokenRequest,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not db:
+        return {"status": "success", "message": "Db stubbed"}
     user = db.get_user(identity.uid)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -84,7 +88,8 @@ async def register_token(
 async def unregister_token(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    db.update_user_fcm_token(identity.uid, None)
+    if db:
+        db.update_user_fcm_token(identity.uid, None)
     return {"status": "success", "message": "Token unregistered successfully"}
 
 
@@ -94,7 +99,8 @@ async def update_preferences(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     prefs_dict = body.model_dump()
-    db.update_user_notification_preferences(identity.uid, prefs_dict)
+    if db:
+        db.update_user_notification_preferences(identity.uid, prefs_dict)
     return {"status": "success", "preferences": prefs_dict}
 
 
@@ -102,7 +108,7 @@ async def update_preferences(
 async def get_preferences(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    prefs = db.get_user_notification_preferences(identity.uid)
+    prefs = db.get_user_notification_preferences(identity.uid) if db else None
     if prefs is None:
         # Default fallback preferences
         prefs = {
@@ -119,6 +125,8 @@ async def confirm_notification_receipt(
     notification_id: str,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not db:
+        return {"status": "success"}
     notification = db.get_notification(notification_id)
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
@@ -145,16 +153,18 @@ async def report_presence(
     return {"status": "active"}
 
 
-# ── Background Compatibility / Proactive Engine Helper ───────────────────────
+# ── Background Compatibility Helper ──────────────────────────────────────────
 
 async def queue_and_send_notification(
     user_id: str,
     pair_id: str,
-    companion_id: str,
+    partner_id: str,
     sender_name: str,
     message_preview: str,
     payload_dict: dict,
 ) -> dict:
+    if not db:
+        return {}
     app_active = is_user_active(user_id)
     queued_at = datetime.utcnow().isoformat(timespec="milliseconds")
     payload = {
@@ -163,7 +173,7 @@ async def queue_and_send_notification(
         "sender_name": sender_name,
         "message_preview": message_preview,
         "pair_id": pair_id,
-        "companion_id": companion_id,
+        "partner_id": partner_id,
         "timestamp": queued_at,
         "app_active": str(app_active).lower(),
     }
@@ -171,7 +181,7 @@ async def queue_and_send_notification(
     notification = db.queue_notification(
         user_id=user_id,
         pair_id=pair_id,
-        companion_id=companion_id,
+        partner_id=partner_id,
         sender_name=sender_name,
         message_preview=message_preview,
         payload_dict=payload,
@@ -228,7 +238,7 @@ async def queue_and_send_notification(
             outcome = "failed"
             data_dict = {
                 "pair_id": pair_id,
-                "companion_id": companion_id,
+                "partner_id": partner_id,
                 "sender_name": sender_name,
                 "message_preview": dispatch_preview,
                 "conversation_id": str(dispatch_payload.get("conversation_id") or ""),
@@ -242,13 +252,13 @@ async def queue_and_send_notification(
                 success = await FCMSender().send(fcm_token, sender_name, dispatch_preview, data_dict)
                 outcome = "sent" if success else "failed"
             else:
-                from core.proactive_engine import _send_push_hooks
-                outcome = _send_push_hooks(
-                    user_id=user_id,
-                    title=sender_name,
-                    body=dispatch_preview,
-                    data=data_dict,
-                )
+                if _send_push_hooks:
+                    outcome = _send_push_hooks(
+                        user_id=user_id,
+                        title=sender_name,
+                        body=dispatch_preview,
+                        data=data_dict,
+                    )
 
             # Mark the FIRST notification status
             db.mark_notification_status(
@@ -267,7 +277,7 @@ async def queue_and_send_notification(
     outcome = "failed"
     data_dict = {
         "pair_id": pair_id,
-        "companion_id": companion_id,
+        "partner_id": partner_id,
         "sender_name": sender_name,
         "message_preview": dispatch_preview,
         "conversation_id": str(dispatch_payload.get("conversation_id") or ""),
@@ -281,13 +291,13 @@ async def queue_and_send_notification(
         success = await FCMSender().send(fcm_token, sender_name, dispatch_preview, data_dict)
         outcome = "sent" if success else "failed"
     else:
-        from core.proactive_engine import _send_push_hooks
-        outcome = _send_push_hooks(
-            user_id=user_id,
-            title=sender_name,
-            body=dispatch_preview,
-            data=data_dict,
-        )
+        if _send_push_hooks:
+            outcome = _send_push_hooks(
+                user_id=user_id,
+                title=sender_name,
+                body=dispatch_preview,
+                data=data_dict,
+            )
 
     return db.mark_notification_status(
         notification["id"],

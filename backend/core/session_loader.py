@@ -1,10 +1,11 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from memory.store import db
-from personality.registry import get_partner_instance, resolve_or_assign_primary_pair
-from core.proactive_engine import pull_pending_events
-from memory.retriever import get_memory_count
+db = None
+get_partner_instance = None
+resolve_or_assign_primary_pair = None
+pull_pending_events = None
+get_memory_count = None
 
 logger = logging.getLogger(__name__)
 

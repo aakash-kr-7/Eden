@@ -18,8 +18,8 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    # ── Required Settings (from Replatforming Prompt) ──────────────────────
-    DATABASE_URL: str = Field(default=str(BACKEND_DIR / "db" / "companion.db"))
+    # ── Required Settings ──────────────────────────────────────────────────
+    DATABASE_URL: str = Field(default=str(BACKEND_DIR / "db" / "partner.db"))
     FIREBASE_CREDENTIALS_PATH: str = Field(default="")
     GROQ_API_KEY: str = Field(default="")
     GROQ_MODEL: str = Field(default="llama-3.1-70b-versatile")
@@ -37,16 +37,15 @@ class Settings(BaseSettings):
     OPS_SECRET_KEY: str = Field(default="ops_secret_default_key")
 
     # ── Additional Existing Settings (for compatibility) ───────────────────
-    CHROMA_DB_PATH: str = Field(default=str(BACKEND_DIR / "chroma_db"))
-    CHARACTERS_DIR: str = Field(default=str(BACKEND_DIR / "personality" / "characters"))
-    DEFAULT_CHARACTER: str = Field(default="nova")
+    ARCHETYPES_DIR: str = Field(default=str(BACKEND_DIR / "personality" / "archetypes"))
+    DEFAULT_PARTNER: str = Field(default="the_anchor")
     LLM_TEMPERATURE: float = Field(default=0.82)
     LLM_MAX_TOKENS: int = Field(default=300)
     LLM_FALLBACK_MODEL: str = Field(default="llama-3.1-8b-instant")
     GROQ_BASE_URL: str = Field(default="https://api.groq.com/openai/v1")
     APP_HOST: str = Field(default="0.0.0.0")
     APP_PORT: int = Field(default=8000)
-    FIREBASE_PROJECT_ID: str = Field(default="sol-mvp-4f7c1")
+    FIREBASE_PROJECT_ID: str = Field(default="eden-platform-project")
     PROACTIVE_DEFAULT_QUIET_HOURS_START: int = Field(default=23)
     PROACTIVE_DEFAULT_QUIET_HOURS_END: int = Field(default=8)
     MEMORY_RETRIEVAL_COUNT: int = Field(default=6)

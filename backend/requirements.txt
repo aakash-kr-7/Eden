@@ -1,32 +1,19 @@
 # =============================================================================
-# requirements.txt — Python Backend Dependencies
+# requirements.txt — Python Backend Dependencies (Sanitized for Eden)
 # =============================================================================
 
-# ── Web Framework & Servers ────────────────────────────────────────────────
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
-
-# ── Configuration & Environments ───────────────────────────────────────────
 pydantic-settings==2.2.1
 python-dotenv==1.0.1
-
-# ── Auth & Firebase ────────────────────────────────────────────────────────
 firebase-admin==6.8.0
 python-jose[cryptography]==3.3.0
-
-# ── Database & Storage ─────────────────────────────────────────────────────
 sqlite-utils==3.36
-chromadb==0.5.0
-
-# ── API Clients & Networking ───────────────────────────────────────────────
 groq==0.9.0
 httpx==0.27.0
 aiofiles==23.2.1
-
-# ── Background Worker & Schedule ───────────────────────────────────────────
 apscheduler==3.10.4
 
-# ── Utilities ──────────────────────────────────────────────────────────────
-anyio==4.3.0
-numpy==1.26.4
-psutil==5.9.8
+# Eden Additions
+sqlalchemy
+asyncpg

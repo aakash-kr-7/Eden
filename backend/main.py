@@ -14,7 +14,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from auth.firebase import initialize_firebase_auth
 from config import settings
 
-from api.auth import router as auth_router
 from api.chat import router as chat_router
 from api.onboarding import router as onboarding_router
 from api.profile import router as profile_router
@@ -38,60 +37,19 @@ logger = logging.getLogger("main")
 scheduler = AsyncIOScheduler()
 
 async def run_life_simulator():
-    """Trigger life simulator checks for all active user-companion pairs."""
-    logger.info("Executing life simulator background check...")
-    try:
-        from core.life_simulator import LifeSimulator
-        simulator = LifeSimulator()
-        await simulator.run_for_all_active_users()
-        logger.info("Life simulator background check complete.")
-    except Exception as exc:
-        logger.error("Error encountered in life simulator background task: %s", exc, exc_info=True)
+    """Trigger life simulator checks for all active user-partner pairs."""
+    logger.info("Executing life simulator background check (stubbed)...")
+    pass
 
 async def run_proactive_engine():
     """Periodically evaluate and dispatch proactive messages to users."""
-    logger.info("Executing proactive engine background check...")
-    if not settings.PROACTIVE_ENGINE_ENABLED:
-        logger.info("Proactive engine task skipped (disabled).")
-        return
-
-    try:
-        from memory.store import db
-        from core.proactive_engine import maybe_generate_for_user
-        
-        user_ids = await asyncio.to_thread(db.list_user_ids)
-        sem = asyncio.Semaphore(10)
-
-        async def process_single_user(user_id: str):
-            async with sem:
-                try:
-                    events = await maybe_generate_for_user(user_id, limit=1)
-                    if events:
-                        logger.info("Successfully generated and queued %d proactive events for user %s", len(events), user_id)
-                except Exception as exc:
-                    logger.error("Failed proactive event generation for user %s: %s", user_id, exc)
-
-        tasks = [process_single_user(uid) for uid in user_ids]
-        await asyncio.gather(*tasks)
-        logger.info("Proactive engine background check complete.")
-    except Exception as exc:
-        logger.error("Error encountered in proactive engine background task: %s", exc, exc_info=True)
-
+    logger.info("Executing proactive engine background check (stubbed)...")
+    pass
 
 async def run_proactive_delivery():
     """Periodically check and deliver pending proactive outreach messages."""
-    logger.info("Executing proactive delivery background check...")
-    if not settings.PROACTIVE_ENGINE_ENABLED:
-        logger.info("Proactive engine delivery skipped (disabled globally).")
-        return
-
-    try:
-        from core.proactive_engine import ProactiveEngine
-        engine = ProactiveEngine()
-        await engine.deliver_pending()
-        logger.info("Proactive delivery background check complete.")
-    except Exception as exc:
-        logger.error("Error encountered in proactive delivery background task: %s", exc, exc_info=True)
+    logger.info("Executing proactive delivery background check (stubbed)...")
+    pass
 
 
 @asynccontextmanager
@@ -109,15 +67,8 @@ async def lifespan(app: FastAPI):
         logger.critical("Configuration validation failed: %s", e)
         sys.exit(1)
 
-    # 2. Connect database (this automatically runs schema setup/migrations)
-    from memory.store import db
-    try:
-        db.connect()
-        logger.info("Database connection established successfully.")
-    except Exception as e:
-        logger.critical("Database connection and schema setup failed: %s", e)
-        sys.exit(1)
-
+    # 2. Connect database (stubbed out until rebuild)
+    logger.info("Database connection setup skipped during sanitization.")
 
     # 4. Initialize Firebase SDK Auth
     try:
@@ -157,14 +108,13 @@ async def lifespan(app: FastAPI):
     # ── SHUTDOWN ───────────────────────────────────────────────────────────
     logger.info("Graceful shutdown initiated...")
     scheduler.shutdown(wait=False)
-    db.close()
     logger.info("Graceful shutdown completed successfully.")
 
 
 # FastAPI Application Definition
 app = FastAPI(
     title="Eden API",
-    description="Production backend API for Eden companion relationship platform.",
+    description="Production backend API for Eden partner relationship platform.",
     version="2.0.0",
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
@@ -245,7 +195,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # Mount Routers (group tags cleanly under /api prefix)
-app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(chat_router, prefix="/api", tags=["chat"])
 app.include_router(onboarding_router, prefix="/api", tags=["onboarding"])
 app.include_router(profile_router, prefix="/api", tags=["profile"])

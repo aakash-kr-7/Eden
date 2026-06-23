@@ -61,18 +61,8 @@ def initialize_firebase_auth() -> None:
     logger.info("Firebase Admin initialized with credentials from: %s", path)
 
 def get_or_create_user(user_id: str, email: Optional[str]) -> None:
-    """Ensure user exists in the database and preference table."""
-    from memory.store import db
-    try:
-        with db.transaction():
-            db.get_or_create_user(
-                user_id=user_id,
-                email=email,
-            )
-            db.get_or_create_user_preferences(user_id=user_id)
-    except Exception as db_exc:
-        logger.exception("Failed to get_or_create_user / registration for user_id %s", user_id)
-        raise RuntimeError(f"Database error during user registration: {db_exc}")
+    """Ensure user exists in the database and preference table (stubbed)."""
+    pass
 
 def verify_id_token(id_token: str) -> User:
     """Verify Firebase ID token, cache verified token for 5 minutes, and register user in SQLite."""

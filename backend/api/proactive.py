@@ -1,16 +1,14 @@
-# =============================================================================
-# api/proactive.py — Proactive Engine Endpoints
-# =============================================================================
-
+import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
-from memory.store import db
-from core.proactive_engine import ProactiveEngine
 from config import settings
 
 router = APIRouter(prefix="/proactive")
+
+db = None
+ProactiveEngine = None
 
 
 def _require_ops_access(x_admin_token: Optional[str] = Header(default=None)) -> None:
@@ -27,8 +25,10 @@ async def get_pending_proactive(
 ):
     """
     Returns all unsent (unacknowledged but sent/delivered to FCM) proactive messages for this user.
-    These are the messages that the companion sent while the user was away.
+    These are the messages that the partner sent while the user was away.
     """
+    if not db:
+        return []
     user_id = identity.uid
     rows = db.conn.execute(
         """
@@ -58,6 +58,8 @@ async def acknowledge_proactive(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     """Marks a proactive message as acknowledged (read by the user)."""
+    if not db:
+        return {"status": "success"}
     user_id = identity.uid
     row = db.conn.execute(
         "SELECT user_id FROM proactive_events WHERE id = ?", (message_id,)
@@ -84,9 +86,11 @@ async def trigger_proactive(
     """Admin-only endpoint to manually trigger evaluation for a user."""
     _require_ops_access(x_admin_token)
 
+    if not ProactiveEngine:
+        return {"status": "success"}
+
     target_user_id = user_id or identity.uid
     engine = ProactiveEngine()
-    # Runs the evaluation loop (forcing it to bypass standard time check thresholds)
     await engine.evaluate(target_user_id, force=True)
 
     return {"status": "success"}

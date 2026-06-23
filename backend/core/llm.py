@@ -11,7 +11,7 @@ from typing import Optional, Any
 import httpx
 
 from config import Settings, settings
-from memory.store import db
+db = None
 
 logger = logging.getLogger(__name__)
 
@@ -232,12 +232,12 @@ def _clean_response(text: str) -> str:
 def _known_speaker_labels() -> list[str]:
     labels = {"Assistant", "AI", "Partner"}
     try:
-        names = db.list_companion_names()
+        names = db.list_partner_names()
         for name in names:
             labels.add(name)
             labels.add(f"partner_{name.lower()}")
     except Exception:
-        labels.add(settings.DEFAULT_CHARACTER)
+        labels.add(settings.DEFAULT_PARTNER)
     return sorted(labels, key=len, reverse=True)
 
 

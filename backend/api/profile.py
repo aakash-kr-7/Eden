@@ -6,12 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
-from memory.relationship_engine import RelationshipEngine
-from memory.store import db, memory_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/profile")
+
+db = None
+memory_store = None
+RelationshipEngine = None
 
 class ProfileUpdate(BaseModel):
     display_name: Optional[str] = None
@@ -24,14 +26,14 @@ class ProfileUpdate(BaseModel):
 async def get_my_profile(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    user = db.get_user(identity.uid)
+    user = db.get_user(identity.uid) if db else None
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    preferences = db.get_or_create_user_preferences(identity.uid)
-    primary = db.get_primary_pair(identity.uid)
+    preferences = db.get_or_create_user_preferences(identity.uid) if db else {}
+    primary = db.get_primary_pair(identity.uid) if db else None
     partner_basics = {}
-    if primary:
+    if primary and db:
         partner = db.get_partner(identity.uid) or {}
         introduced_str = primary.get("introduced_at") or primary.get("created_at")
         days_together = 1
@@ -43,7 +45,7 @@ async def get_my_profile(
                 pass
         
         partner_basics = {
-            "name": partner.get("name") or primary.get("companion_id", "").title(),
+            "name": partner.get("name") or primary.get("partner_id", "").title(),
             "stage": primary.get("current_stage") or "new",
             "days_together": days_together,
             "memory_count": primary.get("memory_count") or 0,
@@ -66,6 +68,8 @@ async def get_my_profile(
 async def get_relationship_details(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not RelationshipEngine:
+        return {}
     engine = RelationshipEngine()
     summary = await engine.get_relationship_summary(identity.uid)
     return summary
@@ -75,6 +79,8 @@ async def update_profile(
     payload: ProfileUpdate,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not db:
+        return {"success": False}
     if payload.display_name is not None:
         db.update_user_display_name(identity.uid, payload.display_name)
         
@@ -111,7 +117,7 @@ async def update_profile(
             "timezone": user.get("timezone"),
         },
         "partner": {
-            "name": partner.get("name") or (primary.get("companion_id", "").title() if primary else "Companion"),
+            "name": partner.get("name") or (primary.get("partner_id", "").title() if primary else "Partner"),
             "stage": stage
         },
         "preferences": preferences,
@@ -125,6 +131,8 @@ async def get_memories(
     limit: int = Query(10, ge=1, le=100),
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not db:
+        return {"memories": [], "total": 0, "page": page, "limit": limit}
     primary = db.get_primary_pair(identity.uid)
     if not primary:
         return {"memories": [], "total": 0, "page": page, "limit": limit}
@@ -150,6 +158,8 @@ async def delete_vault_memory(
     memory_id: str,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not db or not memory_store:
+        return {"success": False}
     primary = db.get_primary_pair(identity.uid)
     if not primary:
         raise HTTPException(status_code=404, detail="Relationship not found")
@@ -166,6 +176,8 @@ async def pin_vault_memory(
     memory_id: str,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not db or not memory_store:
+        return {"success": False}
     primary = db.get_primary_pair(identity.uid)
     if not primary:
         raise HTTPException(status_code=404, detail="Relationship not found")
@@ -182,6 +194,8 @@ async def pin_vault_memory(
 async def delete_all_vault_memories(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not db:
+        return {"success": False}
     primary = db.get_primary_pair(identity.uid)
     if not primary:
         raise HTTPException(status_code=404, detail="Relationship not found")
@@ -194,6 +208,7 @@ async def delete_all_vault_memories(
 async def delete_my_profile(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
+    if not db:
+        return {"success": False}
     db.delete_user(identity.uid)
     return {"success": True, "deleted_user": True}
-
