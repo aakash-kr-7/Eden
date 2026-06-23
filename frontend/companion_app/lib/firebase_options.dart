@@ -41,52 +41,50 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyB8TrERA_f9xjsNS2xg1EaI95YU5v51PYs',
-    appId: '1:1014154059769:web:842ab5c11743b20d206728',
-    messagingSenderId: '1014154059769',
-    projectId: 'sol-mvp-4f7c1',
-    authDomain: 'sol-mvp-4f7c1.firebaseapp.com',
-    storageBucket: 'sol-mvp-4f7c1.firebasestorage.app',
-    measurementId: 'G-D07SKZ8DPZ',
+    apiKey: 'AIzaSyBXv1b5eS4ag27aImKa-xhFE2gakAd_pX4',
+    appId: '1:1022130965696:web:a26a65b6865d10e10a3125',
+    messagingSenderId: '1022130965696',
+    projectId: 'eden-237a9',
+    authDomain: 'eden-237a9.firebaseapp.com',
+    storageBucket: 'eden-237a9.firebasestorage.app',
+    measurementId: 'G-E3ZS67N713',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyAiJzf9MFqqudgDV8uN6G0X9KbU96ukjdc',
-    appId: '1:1014154059769:android:248d2958402eafee206728',
-    messagingSenderId: '1014154059769',
-    projectId: 'sol-mvp-4f7c1',
-    storageBucket: 'sol-mvp-4f7c1.firebasestorage.app',
+    apiKey: 'AIzaSyD6gaq7FKSVM4VtTtmd276kJ76GPHzHfZs',
+    appId: '1:1022130965696:android:cf14421bc69384170a3125',
+    messagingSenderId: '1022130965696',
+    projectId: 'eden-237a9',
+    storageBucket: 'eden-237a9.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyBhpKsVv-sofTxFHPDQ9h1xpgr7EgOHyuM',
-    appId: '1:1014154059769:ios:fa1ff8be0b5c772c206728',
-    messagingSenderId: '1014154059769',
-    projectId: 'sol-mvp-4f7c1',
-    storageBucket: 'sol-mvp-4f7c1.firebasestorage.app',
-    androidClientId: '1014154059769-rs3krvs2d8o3qqt1t3q32vl9r9v7h4ts.apps.googleusercontent.com',
-    iosClientId: '1014154059769-hvbbpbkmt0mcd98b895dp2f4o3s4ben2.apps.googleusercontent.com',
+    apiKey: 'AIzaSyCu1RjAmpOtfzumYzw6VDYMNL5xqI1G4g4',
+    appId: '1:1022130965696:ios:3bb1a9e3c4fb451c0a3125',
+    messagingSenderId: '1022130965696',
+    projectId: 'eden-237a9',
+    storageBucket: 'eden-237a9.firebasestorage.app',
+    androidClientId: '1022130965696-difh6rigu4msgeib5e5tg9v392clvdfe.apps.googleusercontent.com',
+    iosClientId: '1022130965696-ugehe2paj92it0vuhi48o68cn0190a7h.apps.googleusercontent.com',
     iosBundleId: 'com.solmvp.companionApp',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyBhpKsVv-sofTxFHPDQ9h1xpgr7EgOHyuM',
-    appId: '1:1014154059769:ios:fa1ff8be0b5c772c206728',
-    messagingSenderId: '1014154059769',
-    projectId: 'sol-mvp-4f7c1',
-    storageBucket: 'sol-mvp-4f7c1.firebasestorage.app',
-    androidClientId: '1014154059769-rs3krvs2d8o3qqt1t3q32vl9r9v7h4ts.apps.googleusercontent.com',
-    iosClientId: '1014154059769-hvbbpbkmt0mcd98b895dp2f4o3s4ben2.apps.googleusercontent.com',
+    apiKey: 'AIzaSyCu1RjAmpOtfzumYzw6VDYMNL5xqI1G4g4',
+    appId: '1:1022130965696:ios:3bb1a9e3c4fb451c0a3125',
+    messagingSenderId: '1022130965696',
+    projectId: 'eden-237a9',
+    storageBucket: 'eden-237a9.firebasestorage.app',
+    androidClientId: '1022130965696-difh6rigu4msgeib5e5tg9v392clvdfe.apps.googleusercontent.com',
+    iosClientId: '1022130965696-ugehe2paj92it0vuhi48o68cn0190a7h.apps.googleusercontent.com',
     iosBundleId: 'com.solmvp.companionApp',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyB8TrERA_f9xjsNS2xg1EaI95YU5v51PYs',
-    appId: '1:1014154059769:web:678bb7430ff3db7a206728',
-    messagingSenderId: '1014154059769',
-    projectId: 'sol-mvp-4f7c1',
-    authDomain: 'sol-mvp-4f7c1.firebaseapp.com',
-    storageBucket: 'sol-mvp-4f7c1.firebasestorage.app',
-    measurementId: 'G-SKKZSY7S3P',
+    apiKey: 'AIzaSyBXv1b5eS4ag27aImKa-xhFE2gakAd_pX4',
+    appId: '1:1022130965696:web:ab968b49ac70244a0a3125',
+    messagingSenderId: '1022130965696',
+    projectId: 'eden-237a9',
+    authDomain: 'eden-237a9.firebaseapp.com',
+    storageBucket: 'eden-237a9.firebasestorage.app',
+    measurementId: 'G-TH97E243P7',
   );
 }

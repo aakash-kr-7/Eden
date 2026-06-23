@@ -1,42 +1,85 @@
 {
   "project_info": {
-    "project_number": "1014154059769",
-    "project_id": "sol-mvp-4f7c1",
-    "storage_bucket": "sol-mvp-4f7c1.firebasestorage.app"
+    "project_number": "1022130965696",
+    "project_id": "eden-237a9",
+    "storage_bucket": "eden-237a9.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1014154059769:android:248d2958402eafee206728",
+        "mobilesdk_app_id": "1:1022130965696:android:83f94d060633f5a20a3125",
         "android_client_info": {
-          "package_name": "com.solmvp.companion_app"
+          "package_name": "com.eden.app"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1014154059769-rs3krvs2d8o3qqt1t3q32vl9r9v7h4ts.apps.googleusercontent.com",
+          "client_id": "1022130965696-difh6rigu4msgeib5e5tg9v392clvdfe.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.solmvp.companion_app",
+            "package_name": "com.eden.app",
             "certificate_hash": "ff8fa150b941fd16984e00435e74c94fa27dc66c"
           }
         },
         {
-          "client_id": "1014154059769-15om9ne61mbkklej55fth0r6ukcn9lu9.apps.googleusercontent.com",
+          "client_id": "1022130965696-a7f4f6fad6u9qk2p0q6e5muv8sc0h6rc.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyAiJzf9MFqqudgDV8uN6G0X9KbU96ukjdc"
+          "current_key": "AIzaSyD6gaq7FKSVM4VtTtmd276kJ76GPHzHfZs"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "1014154059769-15om9ne61mbkklej55fth0r6ukcn9lu9.apps.googleusercontent.com",
+              "client_id": "1022130965696-a7f4f6fad6u9qk2p0q6e5muv8sc0h6rc.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "1022130965696-2dvan14k2pb5p4ssbac1d402cablcg8c.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.eden.app"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1022130965696:android:cf14421bc69384170a3125",
+        "android_client_info": {
+          "package_name": "com.solmvp.companion_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1022130965696-a7f4f6fad6u9qk2p0q6e5muv8sc0h6rc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD6gaq7FKSVM4VtTtmd276kJ76GPHzHfZs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1022130965696-a7f4f6fad6u9qk2p0q6e5muv8sc0h6rc.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1022130965696-2dvan14k2pb5p4ssbac1d402cablcg8c.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.eden.app"
+              }
             }
           ]
         }
