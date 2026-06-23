@@ -33,7 +33,6 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")
     ENVIRONMENT: str = Field(default="development")
     ALLOWED_ORIGINS: List[str] = Field(default=["*"])
-    FCM_SERVER_KEY: str = Field(default="")
     ADMIN_DEBUG_TOKEN: str = Field(default="admin_secret")
     OPS_SECRET_KEY: str = Field(default="ops_secret_default_key")
 

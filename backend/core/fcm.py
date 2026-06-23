@@ -3,59 +3,48 @@
 # =============================================================================
 
 import logging
+import asyncio
 from firebase_admin import messaging
-from firebase_admin.exceptions import FirebaseError, InvalidArgumentError
 from memory.store import db
 
 logger = logging.getLogger(__name__)
 
 class FCMSender:
-    async def send(self, fcm_token: str, title: str, body: str, data: dict = {}) -> bool:
+    async def send(
+        self,
+        fcm_token: str,
+        title: str,
+        body: str,
+        data: dict = {}
+    ) -> bool:
         """
-        Sends FCM notification.
-        Uses firebase-admin SDK.
+        Sends FCM notification using Firebase Admin SDK with FCM HTTP v1 API.
         Returns True on success, False on failure.
-        On InvalidArgument/NotRegistered error: mark token as invalid, don't retry.
         """
         if not fcm_token:
             logger.warning("FCM send requested but no fcm_token provided")
             return False
 
         try:
-            # firebase-admin SDK requires keys and values to be strings in data dict
-            string_data = {}
-            if data:
-                for k, v in data.items():
-                    if v is not None:
-                        string_data[str(k)] = str(v)
+            # FCM requires all keys and values to be strings
+            string_data = {k: str(v) for k, v in data.items()} if data else {}
             
             message = messaging.Message(
                 token=fcm_token,
                 notification=messaging.Notification(title=title, body=body),
                 data=string_data if string_data else None
             )
-            # send is synchronous in the SDK, call it directly
-            response = messaging.send(message)
+            
+            # Send message in a thread pool via asyncio.to_thread()
+            response = await asyncio.to_thread(messaging.send, message)
             logger.info("Successfully sent FCM message: %s", response)
             return True
-        except messaging.UnregisteredError as exc:
-            logger.warning("FCM token unregistered/expired: %s. Invalidating token.", exc)
+        except (messaging.UnregisteredError, messaging.SenderIdMismatchError) as exc:
+            logger.warning("Invalid FCM token %s: %s. Invalidating token.", fcm_token, exc)
             self._invalidate_token(fcm_token)
-            return False
-        except InvalidArgumentError as exc:
-            logger.warning("FCM token invalid argument: %s. Invalidating token.", exc)
-            self._invalidate_token(fcm_token)
-            return False
-        except FirebaseError as exc:
-            error_code = getattr(exc, "code", "")
-            if error_code in ("registration-token-not-registered", "invalid-argument"):
-                logger.warning("FCM token invalid (code: %s). Invalidating token.", error_code)
-                self._invalidate_token(fcm_token)
-            else:
-                logger.error("Firebase error sending FCM: %s", exc)
             return False
         except Exception as exc:
-            logger.exception("Unexpected error sending FCM: %s", exc)
+            logger.error("Error sending FCM: %s", exc)
             return False
 
     def _invalidate_token(self, fcm_token: str):
