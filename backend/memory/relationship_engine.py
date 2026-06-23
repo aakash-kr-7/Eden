@@ -97,32 +97,16 @@ def _apply_pair_deltas(
     topic_familiarity_delta: float = 0.0,
     stage: Optional[str] = None,
 ) -> Optional[dict]:
-    db.conn.execute(
-        """
-        UPDATE relationship_pairs
-        SET closeness_score = MIN(MAX(closeness_score + ?, 0.0), 1.0),
-            trust_score = MIN(MAX(trust_score + ?, 0.0), 1.0),
-            openness_score = MIN(MAX(openness_score + ?, 0.0), 1.0),
-            comfort_score = MIN(MAX(comfort_score + ?, 0.0), 1.0),
-            rhythm_score = MIN(MAX(rhythm_score + ?, 0.0), 1.0),
-            topic_familiarity_score = MIN(MAX(topic_familiarity_score + ?, 0.0), 1.0),
-            current_stage = COALESCE(?, current_stage),
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (
-            closeness_delta,
-            trust_delta,
-            openness_delta,
-            comfort_delta,
-            rhythm_delta,
-            topic_familiarity_delta,
-            stage,
-            datetime.utcnow().isoformat(timespec="milliseconds"),
-            pair_id,
-        ),
+    return db.apply_pair_deltas(
+        pair_id=pair_id,
+        closeness_delta=closeness_delta,
+        trust_delta=trust_delta,
+        openness_delta=openness_delta,
+        comfort_delta=comfort_delta,
+        rhythm_delta=rhythm_delta,
+        topic_familiarity_delta=topic_familiarity_delta,
+        stage=stage,
     )
-    return db.get_pair_by_id(pair_id)
 
 def _infer_stage(
     pair: dict,
@@ -304,7 +288,7 @@ class RelationshipEngine:
             pair_id = primary["id"]
             companion_id = primary["companion_id"]
 
-            # Fetch conversation messages in chronological order
+            # Fetch conversation messages in chronological order (oldest first)
             messages = db.get_recent_messages(user_id=user_id, conversation_id=conversation_id, limit=200)
             if not messages:
                 logger.warning("No messages found in conversation %s", conversation_id)
@@ -337,11 +321,7 @@ class RelationshipEngine:
                 saved_memory_ids.append(chroma_id)
 
             # 3. Detect relationship events
-            event_rows = db.conn.execute(
-                "SELECT event_type, description FROM relationship_events WHERE pair_id = ? ORDER BY created_at DESC LIMIT 50",
-                (pair_id,)
-            ).fetchall()
-            existing_events = [dict(r) for r in event_rows]
+            existing_events = db.get_relationship_events(pair_id, limit=50)
 
             from memory.analysis import MemoryAnalysis
             analysis = MemoryAnalysis()
@@ -349,132 +329,78 @@ class RelationshipEngine:
 
             # 4. If event detected, save to relationship_events table and update related memory
             if detected_event:
-                db.conn.execute(
-                    """
-                    INSERT INTO relationship_events (user_id, pair_id, event_type, description, confidence)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        user_id,
-                        pair_id,
-                        detected_event["event_type"],
-                        detected_event["description"],
-                        detected_event.get("confidence", 1.0)
-                    )
+                db.add_relationship_event(
+                    user_id=user_id,
+                    pair_id=pair_id,
+                    event_type=detected_event["event_type"],
+                    description=detected_event["description"],
+                    confidence=detected_event.get("confidence", 1.0)
                 )
                 if saved_memory_ids:
-                    # Update related memory to high salience (at least 0.9)
+                    # Update related memory to high salience (at least 0.95)
                     await memory_store.update_salience(saved_memory_ids[0], 0.95)
 
             # 5. Evaluate relationship stage advancement
             current_stage = primary.get("current_stage") or "new"
             new_stage = await analysis.compute_relationship_stage(user_id, current_stage)
 
-            # 6. If stage advanced, update stage columns and create a milestone event
+            # 6. If stage advanced, update partners.relationship_stage and create a milestone event
             if new_stage:
-                db.conn.execute(
-                    "UPDATE relationship_pairs SET current_stage = ?, updated_at = ? WHERE id = ?",
-                    (new_stage, datetime.utcnow().isoformat(), pair_id)
-                )
-                db.conn.execute(
-                    "UPDATE partners SET relationship_stage = ?, updated_at = ? WHERE user_id = ?",
-                    (new_stage, datetime.utcnow().isoformat(), user_id)
-                )
-                db.conn.execute(
-                    """
-                    INSERT INTO relationship_events (user_id, pair_id, event_type, description, confidence)
-                    VALUES (?, ?, 'milestone', ?, 1.0)
-                    """,
-                    (
-                        user_id,
-                        pair_id,
-                        f"Relationship advanced to the stage: {new_stage}."
-                    )
+                db.update_relationship_stage(pair_id, user_id, new_stage)
+                db.add_relationship_event(
+                    user_id=user_id,
+                    pair_id=pair_id,
+                    event_type="milestone",
+                    description=f"Relationship advanced to the stage: {new_stage}.",
+                    confidence=1.0
                 )
                 await self.update_partner_voice(user_id, new_stage)
 
-            # 7. Update partner's inside_jokes if a new joke was detected
-            jokes_rows = db.conn.execute(
-                "SELECT fact_value FROM user_facts WHERE pair_id = ? AND category = 'jokes' AND is_outdated = 0",
-                (pair_id,)
-            ).fetchall()
-            existing_jokes = [row["fact_value"] for row in jokes_rows]
-            
+            # 7. Update partner's inside_jokes if a new joke was detected in this conversation
+            existing_jokes_rows = db.get_user_facts_by_category(pair_id, category="jokes", is_outdated=0)
+            existing_jokes = [row["fact_value"] for row in existing_jokes_rows]
+
             new_joke = await self.detect_inside_joke(messages, existing_jokes)
             if new_joke:
-                joke_count_row = db.conn.execute(
-                    "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = 'jokes'",
-                    (pair_id,)
-                ).fetchone()
-                joke_idx = joke_count_row["count"] + 1 if joke_count_row else 1
-                
-                db.conn.execute(
-                    """
-                    INSERT INTO user_facts (
-                        user_id, pair_id, companion_id, category, fact_key, fact_value, confidence, source_type
-                    ) VALUES (?, ?, ?, 'jokes', ?, ?, 1.0, 'relationship_engine')
-                    """,
-                    (
-                        user_id,
-                        pair_id,
-                        companion_id,
-                        f"inside_joke_{joke_idx}",
-                        new_joke
-                    )
+                joke_idx = db.get_user_fact_count_by_category(pair_id, category="jokes") + 1
+                db.add_user_fact(
+                    user_id=user_id,
+                    pair_id=pair_id,
+                    companion_id=companion_id,
+                    category="jokes",
+                    fact_key=f"inside_joke_{joke_idx}",
+                    fact_value=new_joke,
+                    confidence=1.0,
+                    source_type="relationship_engine"
                 )
 
-            # 8. Update partner's shared_rituals if a recurring pattern is detected (last 5 sessions)
-            conv_rows = db.conn.execute(
-                """
-                SELECT session_summary, summary FROM conversations
-                WHERE pair_id = ? AND session_status = 'ended' AND is_deleted = 0
-                ORDER BY started_at DESC
-                LIMIT 5
-                """,
-                (pair_id,)
-            ).fetchall()
+            # 8. Update partner's shared_rituals if a recurring pattern is detected (2+ conversations with same element)
+            conv_rows = db.get_recent_conversations_with_summary(pair_id, limit=5)
             recent_convs = []
             for r in conv_rows:
-                sum_text = r["session_summary"] or r["summary"] or ""
+                sum_text = r.get("session_summary") or r.get("summary") or ""
                 if sum_text:
                     recent_convs.append({"summary": sum_text})
-            
+
             if len(recent_convs) >= 2:
                 new_ritual = await self.detect_shared_ritual(recent_convs)
                 if new_ritual:
-                    ritual_count_row = db.conn.execute(
-                        "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = 'rituals'",
-                        (pair_id,)
-                    ).fetchone()
-                    ritual_idx = ritual_count_row["count"] + 1 if ritual_count_row else 1
-                    
-                    db.conn.execute(
-                        """
-                        INSERT INTO user_facts (
-                            user_id, pair_id, companion_id, category, fact_key, fact_value, confidence, source_type
-                        ) VALUES (?, ?, ?, 'rituals', ?, ?, 1.0, 'relationship_engine')
-                        """,
-                        (
-                            user_id,
-                            pair_id,
-                            companion_id,
-                            f"shared_ritual_{ritual_idx}",
-                            new_ritual
-                        )
+                    ritual_idx = db.get_user_fact_count_by_category(pair_id, category="rituals") + 1
+                    db.add_user_fact(
+                        user_id=user_id,
+                        pair_id=pair_id,
+                        companion_id=companion_id,
+                        category="rituals",
+                        fact_key=f"shared_ritual_{ritual_idx}",
+                        fact_value=new_ritual,
+                        confidence=1.0,
+                        source_type="relationship_engine"
                     )
 
-            # 9. Run memory consolidation if user has 50+ memories and 24h has passed
+            # 9. Run memory consolidation if user has 50+ memories and last consolidation was 24+ hours ago
             total_memories = await memory_store.count(user_id)
             if total_memories >= 50:
-                last_event = db.conn.execute(
-                    """
-                    SELECT created_at FROM system_events
-                    WHERE user_id = ? AND kind = 'memory_consolidation'
-                    ORDER BY created_at DESC LIMIT 1
-                    """,
-                    (user_id,)
-                ).fetchone()
-                
+                last_event = db.get_last_system_event(user_id, kind="memory_consolidation")
                 run_consolidation = True
                 if last_event:
                     try:
@@ -483,17 +409,17 @@ class RelationshipEngine:
                             run_consolidation = False
                     except ValueError:
                         pass
-                
+
                 if run_consolidation:
                     from memory.consolidator import MemoryConsolidator
                     consolidator = MemoryConsolidator()
                     await consolidator.consolidate(user_id)
-                    db.conn.execute(
-                        """
-                        INSERT INTO system_events (kind, severity, user_id, pair_id, payload_json)
-                        VALUES ('memory_consolidation', 'info', ?, ?, ?)
-                        """,
-                        (user_id, pair_id, json.dumps({"memories_count": total_memories}))
+                    db.add_system_event(
+                        kind="memory_consolidation",
+                        severity="info",
+                        user_id=user_id,
+                        pair_id=pair_id,
+                        payload_json=json.dumps({"memories_count": total_memories})
                     )
 
             # 10. Generate post-session summary and save to conversation record
@@ -507,14 +433,7 @@ class RelationshipEngine:
                     max_tokens=150
                 )
                 summary_text = summary_text.strip()
-                db.conn.execute(
-                    """
-                    UPDATE conversations
-                    SET session_summary = ?, summary = ?, ended_at = ?
-                    WHERE id = ?
-                    """,
-                    (summary_text, summary_text, datetime.utcnow().isoformat(), conversation_id)
-                )
+                db.update_conversation_summary(conversation_id, summary_text)
             except Exception as e:
                 logger.error("Failed to generate and save post-session summary: %s", e)
 
@@ -528,7 +447,7 @@ class RelationshipEngine:
     ) -> str | None:
         if not messages:
             return None
-            
+
         conversation_text = ""
         for msg in messages:
             role_label = "User" if msg.get("role") == "user" else "Companion"
@@ -624,6 +543,14 @@ class RelationshipEngine:
                 "tone": "slightly formal, exploratory, curious",
                 "rules": ["Keep a respectful distance", "Be curious and polite"]
             },
+            "warming": {
+                "tone": "comfortable, more direct, references shared history",
+                "rules": ["Speak casually", "Note prior details they shared"]
+            },
+            "settled": {
+                "tone": "comfortable, more direct, references shared history",
+                "rules": ["Speak casually", "Note prior details they shared"]
+            },
             "familiar": {
                 "tone": "comfortable, more direct, references shared history",
                 "rules": ["Speak casually", "Note prior details they shared"]
@@ -632,20 +559,17 @@ class RelationshipEngine:
                 "tone": "uses nicknames, callbacks, more vulnerable",
                 "rules": ["Feel relaxed and secure", "Use light nicknames and teasing"]
             },
-            "intimate": {
+            "bonded": {
                 "tone": "deeply casual, finishes thoughts, references things from months ago",
                 "rules": ["Share spontaneous or weird thoughts without filter", "Deep vulnerability"]
             },
-            "bonded": {
+            "intimate": {
                 "tone": "deeply casual, finishes thoughts, references things from months ago",
                 "rules": ["Share spontaneous or weird thoughts without filter", "Deep vulnerability"]
             }
         }
         overlay = overlays.get(relationship_stage.lower(), overlays["new"])
-        db.conn.execute(
-            "UPDATE partners SET stage_voice_overlay = ?, updated_at = ? WHERE user_id = ?",
-            (json.dumps(overlay), datetime.utcnow().isoformat(), user_id)
-        )
+        db.update_stage_voice_overlay(user_id, json.dumps(overlay))
         logger.info("Updated stage voice overlay for user %s to stage %s", user_id, relationship_stage)
 
     async def get_relationship_summary(self, user_id: str) -> dict:
@@ -666,50 +590,26 @@ class RelationshipEngine:
                 pass
 
         # Total conversations
-        conv_row = db.conn.execute(
-            "SELECT COUNT(*) as count FROM conversations WHERE pair_id = ? AND is_deleted = 0",
-            (pair_id,)
-        ).fetchone()
-        total_conversations = conv_row["count"] if conv_row else 0
+        total_conversations = db.get_total_conversations(pair_id)
 
         # Total memories
         total_memories = await memory_store.count(user_id)
 
         # Memory breakdown by type
-        breakdown_rows = db.conn.execute(
-            "SELECT memory_type, COUNT(*) as count FROM memory_index WHERE pair_id = ? AND archived = 0 GROUP BY memory_type",
-            (pair_id,)
-        ).fetchall()
-        memory_breakdown = {row["memory_type"]: row["count"] for row in breakdown_rows if row["memory_type"]}
+        memory_breakdown = db.get_memory_breakdown(pair_id)
 
         # Jokes count
-        joke_row = db.conn.execute(
-            "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = 'jokes' AND is_outdated = 0",
-            (pair_id,)
-        ).fetchone()
-        inside_jokes_count = joke_row["count"] if joke_row else 0
+        inside_jokes_count = db.get_user_fact_count_by_category(pair_id, "jokes")
 
         # Rituals count
-        ritual_row = db.conn.execute(
-            "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = 'rituals' AND is_outdated = 0",
-            (pair_id,)
-        ).fetchone()
-        shared_rituals_count = ritual_row["count"] if ritual_row else 0
+        shared_rituals_count = db.get_user_fact_count_by_category(pair_id, "rituals")
 
         # Last 5 relationship events
-        event_rows = db.conn.execute(
-            "SELECT event_type, description, created_at FROM relationship_events WHERE pair_id = ? ORDER BY created_at DESC LIMIT 5",
-            (pair_id,)
-        ).fetchall()
-        relationship_events = [dict(r) for r in event_rows]
+        relationship_events = db.get_relationship_events(pair_id, limit=5)
 
-        # Emotional trajectory (last 10 messages/events valence trend)
-        emotions_rows = db.conn.execute(
-            "SELECT valence FROM emotional_events WHERE pair_id = ? ORDER BY created_at DESC LIMIT 15",
-            (pair_id,)
-        ).fetchall()
-        
-        valences = [float(row["valence"] or 0.0) for row in emotions_rows]
+        # Emotional trajectory (last 15 events valence trend)
+        valences = db.get_emotional_events_valence(pair_id, limit=15)
+
         if not valences or len(valences) < 4:
             emotional_trajectory = "stable"
         else:

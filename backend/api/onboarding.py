@@ -90,6 +90,11 @@ async def complete_onboarding(
             if not partner_instance:
                 raise ValueError("Generated partner instance could not be loaded from registry.")
                 
+            # Initialize companion life state
+            from core.life_simulator import LifeSimulator
+            simulator = LifeSimulator()
+            await simulator.initialize_life_state(user_id)
+                
             # 7. Create active conversation, generate opener and save burst response
             conversation_id = db.create_conversation(
                 user_id=user_id,
@@ -102,7 +107,7 @@ async def complete_onboarding(
             pair_updated = db.get_pair_by_id(pair["id"]) or pair
             
             opening_line = build_opening_line(partner_instance, session_count=1)
-            opening_plan = plan_burst_response(
+            opening_plan = await plan_burst_response(
                 raw_text=opening_line,
                 character=partner_instance,
                 is_opening=True,

@@ -71,31 +71,15 @@ async def update_profile(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     if payload.display_name is not None:
-        db.conn.execute(
-            "UPDATE users SET display_name = ? WHERE id = ?",
-            (payload.display_name, identity.uid)
-        )
+        db.update_user_display_name(identity.uid, payload.display_name)
         
     if payload.communication_pace is not None:
         primary = db.get_primary_pair(identity.uid)
         if primary:
-            db.conn.execute(
-                "UPDATE relationship_pairs SET proactive_cadence = ? WHERE id = ?",
-                (payload.communication_pace, primary["id"])
-            )
+            db.update_pair_proactive_cadence(primary["id"], payload.communication_pace)
             
     if payload.emotional_depth_preference is not None:
-        user = db.get_user(identity.uid)
-        if user:
-            try:
-                signals = json.loads(user.get("onboarding_signals") or "{}")
-            except Exception:
-                signals = {}
-            signals["depth_preference"] = payload.emotional_depth_preference
-            db.conn.execute(
-                "UPDATE users SET onboarding_signals = ? WHERE id = ?",
-                (json.dumps(signals), identity.uid)
-            )
+        db.update_user_onboarding_depth_preference(identity.uid, payload.emotional_depth_preference)
             
     user = db.get_user(identity.uid)
     primary = db.get_primary_pair(identity.uid)
@@ -130,49 +114,14 @@ async def get_memories(
         return {"memories": [], "total": 0, "page": page, "limit": limit}
     pair_id = primary["id"]
     
-    query = "FROM memory_index WHERE pair_id = ? AND archived = 0"
-    params = [pair_id]
+    memories, total = db.get_memories_paginated(
+        pair_id=pair_id,
+        memory_type=type,
+        sort=sort,
+        page=page,
+        limit=limit
+    )
     
-    if type:
-        query += " AND memory_type = ?"
-        params.append(type)
-        
-    count_row = db.conn.execute(f"SELECT COUNT(*) as count {query}", params).fetchone()
-    total = count_row["count"] if count_row else 0
-    
-    if sort == "salience":
-        query += " ORDER BY salience DESC, id DESC"
-    elif sort == "recalled":
-        query += " ORDER BY last_recalled_at DESC, id DESC"
-    else:  # recent
-        query += " ORDER BY created_at DESC, id DESC"
-        
-    offset = (page - 1) * limit
-    query += " LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
-    
-    rows = db.conn.execute(f"SELECT * {query}", params).fetchall()
-    
-    memories = []
-    for r in rows:
-        d = dict(r)
-        if d.get("tags"):
-            try:
-                d["tags"] = json.loads(d["tags"])
-            except Exception:
-                d["tags"] = []
-        else:
-            d["tags"] = []
-            
-        d.pop("source_message_ids", None)
-        d.pop("source_message_id", None)
-        d.pop("decay_factor", None)
-        d.pop("user_id", None)
-        d.pop("pair_id", None)
-        d.pop("companion_id", None)
-        
-        memories.append(d)
-        
     return {
         "memories": memories,
         "total": total,
@@ -190,11 +139,7 @@ async def delete_vault_memory(
         raise HTTPException(status_code=404, detail="Relationship not found")
     pair_id = primary["id"]
     
-    row = db.conn.execute(
-        "SELECT id FROM memory_index WHERE pair_id = ? AND (chroma_id = ? OR id = ?)",
-        (pair_id, memory_id, memory_id)
-    ).fetchone()
-    if not row:
+    if not db.verify_memory_ownership(pair_id, memory_id):
         raise HTTPException(status_code=404, detail="Memory not found")
         
     await memory_store.delete(memory_id)
@@ -210,25 +155,9 @@ async def pin_vault_memory(
         raise HTTPException(status_code=404, detail="Relationship not found")
     pair_id = primary["id"]
     
-    row = db.conn.execute(
-        "SELECT salience FROM memory_index WHERE pair_id = ? AND (chroma_id = ? OR id = ?)",
-        (pair_id, memory_id, memory_id)
-    ).fetchone()
-    if not row:
+    if not db.verify_memory_ownership(pair_id, memory_id):
         raise HTTPException(status_code=404, detail="Memory not found")
         
-    current_salience = float(row["salience"] or 0.0)
-    new_salience = max(current_salience, 0.85)
-    
-    if memory_id.isdigit():
-        db.conn.execute(
-            "UPDATE memory_index SET is_pinned = 1, salience = ? WHERE id = ?",
-            (new_salience, int(memory_id))
-        )
-    else:
-        db.conn.execute(
-            "UPDATE memory_index SET is_pinned = 1, salience = ? WHERE chroma_id = ?",
-            (new_salience, str(memory_id))
-        )
+    new_salience = await memory_store.pin_and_boost_salience(memory_id)
         
     return {"success": True, "pinned": True, "salience": new_salience}

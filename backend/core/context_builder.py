@@ -106,14 +106,17 @@ If the most human version of your response is multiple separate texts, separate 
         energy = life_state.get("energy", "balanced")
         day_arc = life_state.get("day_arc", "unknown")
         recent_event = life_state.get("recent_event", "")
+        state_description = life_state.get("state_description", "")
         
         recent_event_str = f"Recently, you: {recent_event}" if recent_event else "Nothing out of the ordinary has happened in your outside life recently."
+        
+        state_desc_str = f"\n- Tone Guidance: {state_description}" if state_description else ""
         
         current_state_block = f"""# YOUR CURRENT STATE
 Your internal state right now, which should naturally color your tone, mood, and how quickly/vulnerably you reply:
 - Time of Day / Day Arc: {day_arc}
 - Current Mood: {mood}
-- Energy Level: {energy}
+- Energy Level: {energy}{state_desc_str}
 
 Outside Life Event:
 {recent_event_str}
@@ -550,25 +553,40 @@ async def build_context(
     # Prepare life state dict
     timezone_name = user.get("timezone")
     now_local = _user_local_now(timezone_name)
-    hour = now_local.hour
-    if 5 <= hour < 12:
-        day_arc = "morning"
-    elif 12 <= hour < 17:
-        day_arc = "afternoon"
-    elif 17 <= hour < 22:
-        day_arc = "evening"
+    
+    ls_row = db.get_life_state(pair_id)
+    if ls_row:
+        mood = ls_row.get("mood") or "content"
+        energy = ls_row.get("energy") or "balanced"
+        day_arc = ls_row.get("day_arc") or "morning"
     else:
-        day_arc = "late night"
+        # Fallback to dynamic calculations
+        hour = now_local.hour
+        if 5 <= hour < 10:
+            day_arc = "morning"
+        elif 10 <= hour < 14:
+            day_arc = "afternoon (early)"
+        elif 14 <= hour < 18:
+            day_arc = "afternoon"
+        elif 18 <= hour < 22:
+            day_arc = "evening"
+        else:
+            day_arc = "night"
 
-    mood = "neutral"
-    if emotional_summary and emotional_summary.get("dominant_emotions"):
-        mood = ", ".join(emotional_summary["dominant_emotions"])
-    elif character.matching_profile:
-        mood = character.matching_profile.get("social_energy", "neutral")
+        mood = "content"
+        if emotional_summary and emotional_summary.get("dominant_emotions"):
+            mood = ", ".join(emotional_summary["dominant_emotions"])
+        elif character.matching_profile:
+            mood = character.matching_profile.get("social_energy", "content")
 
-    energy = "balanced"
-    if character.matching_profile:
-        energy = character.matching_profile.get("social_energy", "balanced")
+        energy = "balanced"
+        if character.matching_profile:
+            energy = character.matching_profile.get("social_energy", "balanced")
+
+    # Generate state description
+    from core.life_simulator import LifeSimulator
+    simulator = LifeSimulator()
+    state_description = await simulator.get_partner_state_description(user_id)
 
     # Dynamic scores snap
     closeness_score = float(pair.get("closeness_score") or 0.18)
@@ -584,6 +602,7 @@ async def build_context(
         "recent_event": recent_event_desc,
         "parent_message_context": parent_message_context,
         "guardrail_instruction": guardrail_instruction,
+        "state_description": state_description,
         "relationship_scores": {
             "closeness": closeness_score,
             "trust": trust_score,

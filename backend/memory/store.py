@@ -893,7 +893,40 @@ class Database:
                 "created_at DATETIME",
                 "updated_at DATETIME",
             ],
+            "life_state": [
+                "pair_id TEXT",
+                "user_id TEXT",
+                "companion_id TEXT",
+                "mood TEXT DEFAULT 'content'",
+                "energy TEXT DEFAULT 'balanced'",
+                "day_arc TEXT DEFAULT 'morning'",
+                "partner_busy_until DATETIME",
+                "last_tick_at DATETIME",
+                "created_at DATETIME",
+                "updated_at DATETIME",
+            ],
         }
+
+        # Check and create life_state table dynamically if missing
+        if not self._table_exists("life_state"):
+            try:
+                self.conn.execute("""
+                    CREATE TABLE life_state (
+                        pair_id               TEXT PRIMARY KEY REFERENCES relationship_pairs(id) ON DELETE CASCADE,
+                        user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        companion_id          TEXT NOT NULL REFERENCES companions(id) ON DELETE CASCADE,
+                        mood                  TEXT NOT NULL DEFAULT 'content',
+                        energy                TEXT NOT NULL DEFAULT 'balanced',
+                        day_arc               TEXT NOT NULL DEFAULT 'morning',
+                        partner_busy_until    DATETIME,
+                        last_tick_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                logger.info("Created table life_state dynamically")
+            except Exception as e:
+                logger.error("Failed to dynamically create life_state table: %s", e)
 
         # Check and create companion_facts table dynamically if missing
         if not self._table_exists("companion_facts"):
@@ -1216,6 +1249,51 @@ class Database:
         res["voice_style_json"] = json.loads(res["voice_style_json"])
         return res
 
+    def get_life_state(self, pair_id: str) -> Optional[dict]:
+        row = self.conn.execute(
+            "SELECT * FROM life_state WHERE pair_id = ?", (pair_id,)
+        ).fetchone()
+        return self._row_to_dict(row)
+
+    def save_life_state(
+        self,
+        pair_id: str,
+        user_id: str,
+        companion_id: str,
+        mood: str,
+        energy: str,
+        day_arc: str,
+        partner_busy_until: Optional[str] = None
+    ) -> None:
+        now = _utcnow_iso()
+        self.conn.execute(
+            """
+            INSERT INTO life_state
+                (pair_id, user_id, companion_id, mood, energy, day_arc, partner_busy_until, last_tick_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(pair_id) DO UPDATE SET
+                mood = excluded.mood,
+                energy = excluded.energy,
+                day_arc = excluded.day_arc,
+                partner_busy_until = excluded.partner_busy_until,
+                last_tick_at = excluded.last_tick_at,
+                updated_at = excluded.updated_at
+            """,
+            (pair_id, user_id, companion_id, mood, energy, day_arc, partner_busy_until, now, now, now)
+        )
+
+    def get_active_users_in_last_days(self, days: int = 7) -> list[str]:
+        threshold = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        rows = self.conn.execute(
+            """
+            SELECT id FROM users
+            WHERE COALESCE(last_active_at, last_seen, created_at) >= ?
+            """,
+            (threshold,)
+        ).fetchall()
+        return [row["id"] for row in rows]
+
+
     def list_users(self, limit: int = 50) -> list[dict]:
         rows = self.conn.execute(
             """
@@ -1531,6 +1609,44 @@ class Database:
             WHERE id = ?
             """,
             values,
+        )
+        return self.get_pair_by_id(pair_id)
+
+    def apply_pair_deltas(
+        self,
+        pair_id: str,
+        closeness_delta: float = 0.0,
+        trust_delta: float = 0.0,
+        openness_delta: float = 0.0,
+        comfort_delta: float = 0.0,
+        rhythm_delta: float = 0.0,
+        topic_familiarity_delta: float = 0.0,
+        stage: Optional[str] = None,
+    ) -> Optional[dict]:
+        self.conn.execute(
+            """
+            UPDATE relationship_pairs
+            SET closeness_score = MIN(MAX(closeness_score + ?, 0.0), 1.0),
+                trust_score = MIN(MAX(trust_score + ?, 0.0), 1.0),
+                openness_score = MIN(MAX(openness_score + ?, 0.0), 1.0),
+                comfort_score = MIN(MAX(comfort_score + ?, 0.0), 1.0),
+                rhythm_score = MIN(MAX(rhythm_score + ?, 0.0), 1.0),
+                topic_familiarity_score = MIN(MAX(topic_familiarity_score + ?, 0.0), 1.0),
+                current_stage = COALESCE(?, current_stage),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                closeness_delta,
+                trust_delta,
+                openness_delta,
+                comfort_delta,
+                rhythm_delta,
+                topic_familiarity_delta,
+                stage,
+                _utcnow_iso(),
+                pair_id,
+            ),
         )
         return self.get_pair_by_id(pair_id)
 
@@ -3575,6 +3691,262 @@ class Database:
         rows = self.conn.execute("SELECT DISTINCT name FROM companions").fetchall()
         return [row["name"] for row in rows if row["name"]]
 
+    def get_total_conversations(self, pair_id: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) as count FROM conversations WHERE pair_id = ? AND is_deleted = 0",
+            (pair_id,),
+        ).fetchone()
+        return row["count"] if row else 0
+
+    def get_relationship_events(self, pair_id: str, limit: int = 50) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT event_type, description, confidence, created_at
+            FROM relationship_events
+            WHERE pair_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (pair_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_relationship_event(
+        self, user_id: str, pair_id: str, event_type: str, description: str, confidence: float
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO relationship_events (user_id, pair_id, event_type, description, confidence)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, pair_id, event_type, description, confidence),
+        )
+
+    def update_relationship_stage(self, pair_id: str, user_id: str, stage: str) -> None:
+        now = _utcnow_iso()
+        self.conn.execute(
+            "UPDATE relationship_pairs SET current_stage = ?, updated_at = ? WHERE id = ?",
+            (stage, now, pair_id),
+        )
+        self.conn.execute(
+            "UPDATE partners SET relationship_stage = ?, updated_at = ? WHERE user_id = ?",
+            (stage, now, user_id),
+        )
+
+    def get_user_facts_by_category(self, pair_id: str, category: str, is_outdated: int = 0) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT id, category, fact_key, fact_value, confidence, source_type, created_at, updated_at
+            FROM user_facts
+            WHERE pair_id = ? AND category = ? AND is_outdated = ?
+            """,
+            (pair_id, category, is_outdated),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_user_fact_count_by_category(self, pair_id: str, category: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = ?",
+            (pair_id, category),
+        ).fetchone()
+        return row["count"] if row else 0
+
+    def add_user_fact(
+        self,
+        user_id: str,
+        pair_id: str,
+        companion_id: str,
+        category: str,
+        fact_key: str,
+        fact_value: str,
+        confidence: float,
+        source_type: str,
+    ) -> None:
+        existing = self.conn.execute(
+            "SELECT id FROM user_facts WHERE pair_id = ? AND fact_key = ? AND is_outdated = 0 LIMIT 1",
+            (pair_id, fact_key)
+        ).fetchone()
+        now = _utcnow_iso()
+        if existing:
+            self.conn.execute(
+                "UPDATE user_facts SET is_outdated = 1, updated_at = ? WHERE id = ?",
+                (now, existing["id"])
+            )
+        self.conn.execute(
+            """
+            INSERT INTO user_facts (
+                user_id, pair_id, companion_id, category, fact_key, fact_value, confidence, source_type, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, pair_id, companion_id, category, fact_key, fact_value, confidence, source_type, now, now),
+        )
+
+    def get_recent_conversations_with_summary(self, pair_id: str, limit: int = 5) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT id, session_summary, summary, started_at, ended_at
+            FROM conversations
+            WHERE pair_id = ? AND session_status = 'ended' AND is_deleted = 0
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            (pair_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_last_system_event(self, user_id: str, kind: str) -> Optional[dict]:
+        row = self.conn.execute(
+            """
+            SELECT id, kind, severity, user_id, pair_id, payload_json, created_at
+            FROM system_events
+            WHERE user_id = ? AND kind = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (user_id, kind),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def add_system_event(
+        self, kind: str, severity: str, user_id: str, pair_id: str, payload_json: str
+    ) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO system_events (kind, severity, user_id, pair_id, payload_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (kind, severity, user_id, pair_id, payload_json),
+        )
+
+    def update_conversation_summary(self, conversation_id: str, summary_text: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE conversations
+            SET session_summary = ?, summary = ?, ended_at = ?
+            WHERE id = ?
+            """,
+            (summary_text, summary_text, _utcnow_iso(), conversation_id),
+        )
+
+    def update_stage_voice_overlay(self, user_id: str, overlay_json: str) -> None:
+        self.conn.execute(
+            "UPDATE partners SET stage_voice_overlay = ?, updated_at = ? WHERE user_id = ?",
+            (overlay_json, _utcnow_iso(), user_id),
+        )
+
+    def get_emotional_events_valence(self, pair_id: str, limit: int = 15) -> list[float]:
+        rows = self.conn.execute(
+            """
+            SELECT valence
+            FROM emotional_events
+            WHERE pair_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (pair_id, limit),
+        ).fetchall()
+        return [float(row["valence"] or 0.0) for row in rows]
+
+    def get_memory_breakdown(self, pair_id: str) -> dict[str, int]:
+        rows = self.conn.execute(
+            """
+            SELECT memory_type, COUNT(*) as count
+            FROM memory_index
+            WHERE pair_id = ? AND archived = 0 AND memory_type IS NOT NULL AND memory_type != ''
+            GROUP BY memory_type
+            """,
+            (pair_id,),
+        ).fetchall()
+        return {row["memory_type"]: row["count"] for row in rows}
+
+    def update_user_display_name(self, user_id: str, display_name: str) -> None:
+        self.conn.execute(
+            "UPDATE users SET display_name = ? WHERE id = ?",
+            (display_name, user_id),
+        )
+
+    def update_pair_proactive_cadence(self, pair_id: str, cadence: str) -> None:
+        self.conn.execute(
+            "UPDATE relationship_pairs SET proactive_cadence = ?, updated_at = ? WHERE id = ?",
+            (cadence, _utcnow_iso(), pair_id),
+        )
+
+    def update_user_onboarding_depth_preference(self, user_id: str, depth_preference: str) -> None:
+        user = self.get_user(user_id)
+        if user:
+            try:
+                signals = json.loads(user.get("onboarding_signals") or "{}")
+            except Exception:
+                signals = {}
+            signals["depth_preference"] = depth_preference
+            self.conn.execute(
+                "UPDATE users SET onboarding_signals = ? WHERE id = ?",
+                (json.dumps(signals), user_id),
+            )
+
+    def get_memories_paginated(
+        self,
+        pair_id: str,
+        memory_type: Optional[str],
+        sort: str,
+        page: int,
+        limit: int,
+    ) -> tuple[list[dict], int]:
+        query = "FROM memory_index WHERE pair_id = ? AND archived = 0"
+        params = [pair_id]
+        if memory_type:
+            query += " AND memory_type = ?"
+            params.append(memory_type)
+
+        count_row = self.conn.execute(f"SELECT COUNT(*) as count {query}", params).fetchone()
+        total = count_row["count"] if count_row else 0
+
+        if sort == "salience":
+            query += " ORDER BY salience DESC, id DESC"
+        elif sort == "recalled":
+            query += " ORDER BY last_recalled_at DESC, id DESC"
+        else:  # recent
+            query += " ORDER BY created_at DESC, id DESC"
+
+        offset = (page - 1) * limit
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        rows = self.conn.execute(f"SELECT * {query}", params).fetchall()
+
+        memories = []
+        for r in rows:
+            d = dict(r)
+            if d.get("tags"):
+                try:
+                    d["tags"] = json.loads(d["tags"])
+                except Exception:
+                    d["tags"] = []
+            else:
+                d["tags"] = []
+            d.pop("source_message_ids", None)
+            d.pop("source_message_id", None)
+            d.pop("decay_factor", None)
+            d.pop("user_id", None)
+            d.pop("pair_id", None)
+            d.pop("companion_id", None)
+            memories.append(d)
+
+        return memories, total
+
+    def verify_memory_ownership(self, pair_id: str, memory_id: str) -> bool:
+        if isinstance(memory_id, int) or (isinstance(memory_id, str) and memory_id.isdigit()):
+            row = self.conn.execute(
+                "SELECT 1 FROM memory_index WHERE pair_id = ? AND id = ?",
+                (pair_id, int(memory_id))
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                "SELECT 1 FROM memory_index WHERE pair_id = ? AND (chroma_id = ? OR id = ?)",
+                (pair_id, str(memory_id), str(memory_id))
+            ).fetchone()
+        return row is not None
+
 
 class MemoryStore:
     def _row_to_dict(self, row) -> dict:
@@ -3699,6 +4071,28 @@ class MemoryStore:
                 "UPDATE memory_index SET is_pinned = 1 WHERE chroma_id = ?",
                 (str(memory_id),)
             )
+
+    async def pin_and_boost_salience(self, memory_id: str) -> float:
+        row = None
+        if isinstance(memory_id, int) or (isinstance(memory_id, str) and memory_id.isdigit()):
+            row = db.conn.execute("SELECT salience FROM memory_index WHERE id = ?", (int(memory_id),)).fetchone()
+        else:
+            row = db.conn.execute("SELECT salience FROM memory_index WHERE chroma_id = ?", (str(memory_id),)).fetchone()
+
+        current_salience = float(row["salience"] or 0.0) if row else 0.0
+        new_salience = max(current_salience, 0.85)
+
+        if isinstance(memory_id, int) or (isinstance(memory_id, str) and memory_id.isdigit()):
+            db.conn.execute(
+                "UPDATE memory_index SET is_pinned = 1, salience = ? WHERE id = ?",
+                (new_salience, int(memory_id))
+            )
+        else:
+            db.conn.execute(
+                "UPDATE memory_index SET is_pinned = 1, salience = ? WHERE chroma_id = ?",
+                (new_salience, str(memory_id))
+            )
+        return new_salience
 
     async def delete(self, memory_id: str):
         row = None

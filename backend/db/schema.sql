@@ -449,6 +449,23 @@ CREATE TABLE IF NOT EXISTS relationship_events (
 
 
 -- =============================================================================
+-- LIFE STATE
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS life_state (
+    pair_id               TEXT PRIMARY KEY REFERENCES relationship_pairs(id) ON DELETE CASCADE,
+    user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    companion_id          TEXT NOT NULL REFERENCES companions(id) ON DELETE CASCADE,
+    mood                  TEXT NOT NULL DEFAULT 'content',
+    energy                TEXT NOT NULL DEFAULT 'balanced',
+    day_arc               TEXT NOT NULL DEFAULT 'morning',
+    partner_busy_until    DATETIME,
+    last_tick_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- =============================================================================
 -- INDEXES
 -- =============================================================================
 DROP INDEX IF EXISTS idx_user_facts_active_unique;

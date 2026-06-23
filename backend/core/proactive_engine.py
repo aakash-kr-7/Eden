@@ -186,6 +186,23 @@ async def maybe_generate_for_user(user_id: str, limit: int = 1, force: bool = Fa
         is_assistant_last = (latest_role == "assistant")
         double_text_prob = getattr(companion, "double_text_probability", 0.5)
 
+        # Check if companion is busy
+        is_busy = False
+        life_state = await loop.run_in_executor(None, db.get_life_state, pair["id"])
+        if life_state:
+            busy_until_str = life_state.get("partner_busy_until")
+            if busy_until_str:
+                try:
+                    busy_until = datetime.fromisoformat(busy_until_str)
+                    if datetime.utcnow() < busy_until:
+                        is_busy = True
+                        logger.info("Outreach blocked for pair %s: companion is busy until %s", pair["id"], busy_until_str)
+                except ValueError:
+                    pass
+
+        if is_busy and not force:
+            continue
+
         decision = decide_proactive_outreach(
             proactive_enabled=bool(int(preferences.get("allow_proactive_messages") or 0)) or force,
             pair_enabled=bool(int(pair.get("proactive_enabled") or 0)) or force,
@@ -472,7 +489,7 @@ async def _generate_proactive_event(
         messages=[*messages, {"role": "user", "content": prompt}],
         system_prompt=system_prompt,
     )
-    burst_plan = plan_burst_response(
+    burst_plan = await plan_burst_response(
         raw_text=reply,
         character=companion,
         is_opening=True,

@@ -41,18 +41,9 @@ async def run_life_simulator():
     """Trigger life simulator checks for all active user-companion pairs."""
     logger.info("Executing life simulator background check...")
     try:
-        from memory.store import db
-        from core.life_simulator import simulate_life_event
-        
-        user_ids = await asyncio.to_thread(db.list_user_ids)
-        for user_id in user_ids:
-            pairs = await asyncio.to_thread(db.list_pairs_for_user, user_id)
-            for pair in pairs:
-                await asyncio.to_thread(
-                    simulate_life_event,
-                    pair_id=pair["id"],
-                    companion_id=pair["companion_id"]
-                )
+        from core.life_simulator import LifeSimulator
+        simulator = LifeSimulator()
+        await simulator.run_for_all_active_users()
         logger.info("Life simulator background check complete.")
     except Exception as exc:
         logger.error("Error encountered in life simulator background task: %s", exc, exc_info=True)
