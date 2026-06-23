@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
+
 import '../theme/eden_theme.dart';
-import '../models/models.dart';
 import '../main.dart';
+import '../widgets/question_card.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -15,53 +17,61 @@ class OnboardingScreen extends ConsumerStatefulWidget {
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with SingleTickerProviderStateMixin {
-  int? _currentStep;
-  String? _questionText;
-  String? _questionType; // 'open' or 'multiple_choice'
-  List<String> _options = [];
+class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
+  int _currentStep = 0;
+  final Map<int, dynamic> _responses = {};
   bool _isLoading = true;
-  bool _isSubmitting = false;
+  bool _isComplete = false;
+  String? _partnerName;
+  String? _firstMessage;
   String? _errorMessage;
 
-  final _textController = TextEditingController();
-  final _scrollController = ScrollController();
-
-  // Animation controller for transition between questions
-  late final AnimationController _animController;
-  late final Animation<double> _fadeAnimation;
-  late final Animation<Offset> _slideAnimation;
+  // Typewriter state
+  String _displayedText = '';
+  int _charIndex = 0;
+  Timer? _typewriterTimer;
+  bool _typewriterFinished = false;
 
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 400),
-    );
-    _fadeAnimation = CurvedAnimation(parent: _animController, curve: Curves.easeInOut);
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0.0, 0.05),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic));
-
     WidgetsBinding.instance.addPostFrameCallback((_) => _initOnboarding());
   }
 
   @override
   void dispose() {
-    _textController.dispose();
-    _scrollController.dispose();
-    _animController.dispose();
+    _typewriterTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _initOnboarding() async {
     try {
       final apiService = ref.read(apiServiceProvider);
-      // Start/Retrieve current onboarding state
-      final result = await apiService.startOnboarding();
-      _displayStep(result);
+      final status = await apiService.checkOnboardingStatus();
+      
+      if (status.isComplete) {
+        // If already completed onboarding, trigger full-screen intro directly
+        setState(() {
+          _isLoading = true;
+        });
+        final completeResult = await apiService.completeOnboarding();
+        setState(() {
+          _partnerName = completeResult.companionName;
+          _firstMessage = completeResult.openingLine;
+          _isComplete = true;
+          _isLoading = false;
+        });
+        if (_firstMessage != null) {
+          _startTypewriter(_firstMessage!);
+        }
+      } else {
+        // Retrieve current onboarding step from backend
+        final result = await apiService.startOnboarding();
+        setState(() {
+          _currentStep = int.tryParse(result.nextStep ?? '0') ?? 0;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -70,308 +80,339 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Single
     }
   }
 
-  void _displayStep(OnboardingStepResult result) {
-    if (result.isComplete) {
-      _finishOnboarding();
-      return;
-    }
-
+  Future<void> _submitAnswer(dynamic response) async {
     setState(() {
-      _currentStep = int.tryParse(result.nextStep ?? '0') ?? 0;
-      _questionText = result.question ?? '';
-      _questionType = result.type ?? 'open';
-      _options = result.options ?? [];
-      _textController.clear();
-      _isLoading = false;
-      _isSubmitting = false;
       _errorMessage = null;
     });
 
-    _animController.forward(from: 0.0);
-  }
+    // 200ms brief pause to let selection animation feel solid
+    await Future.delayed(const Duration(milliseconds: 200));
 
-  Future<void> _submitAnswer(dynamic answer) async {
-    if (_isSubmitting) return;
-    HapticFeedback.lightImpact();
-
-    setState(() {
-      _isSubmitting = true;
-      _errorMessage = null;
-    });
+    // Keep response in local state
+    _responses[_currentStep] = response;
 
     try {
       final apiService = ref.read(apiServiceProvider);
-      final step = _currentStep ?? 0;
-      final result = await apiService.completeOnboardingStep(step, answer);
-
-      if (result.isComplete) {
-        _finishOnboarding();
+      
+      if (_currentStep < onboardingQuestions.length - 1) {
+        // Submit current step answer to API
+        final result = await apiService.completeOnboardingStep(_currentStep, response);
+        
+        // Go to next question, cross-fade is handled by AnimatedSwitcher
+        final nextStep = int.tryParse(result.nextStep ?? '') ?? (_currentStep + 1);
+        setState(() {
+          _currentStep = nextStep;
+        });
       } else {
-        await _animController.reverse();
-        _displayStep(result);
+        // Final step: show loading and complete onboarding
+        setState(() {
+          _isLoading = true;
+        });
+        
+        // Call respond endpoint for step 8
+        await apiService.completeOnboardingStep(_currentStep, response);
+        
+        // Call final completion endpoint
+        final completeResult = await apiService.completeOnboarding();
+
+        setState(() {
+          _partnerName = completeResult.companionName;
+          _firstMessage = completeResult.openingLine;
+          _isComplete = true;
+          _isLoading = false;
+        });
+
+        // Trigger typewriter
+        if (_firstMessage != null) {
+          _startTypewriter(_firstMessage!);
+        }
       }
     } catch (e) {
       setState(() {
-        _isSubmitting = false;
         _errorMessage = e.toString().replaceAll('ApiException(400):', '').trim();
       });
+      // Rethrow to let QuestionCard reset its submit button state
+      rethrow;
     }
   }
 
-  Future<void> _finishOnboarding() async {
+  void _startTypewriter(String message) {
     setState(() {
-      _isLoading = true;
-      _isSubmitting = true;
-      _errorMessage = null;
+      _displayedText = '';
+      _charIndex = 0;
+      _typewriterFinished = false;
     });
-
-    try {
-      final apiService = ref.read(apiServiceProvider);
-      // Complete onboarding and generate partner
-      await apiService.completeOnboarding();
-      if (mounted) {
-        context.go('/chat');
+    _typewriterTimer?.cancel();
+    _typewriterTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
+      if (_charIndex < message.length) {
+        setState(() {
+          _displayedText += message[_charIndex];
+          _charIndex++;
+        });
+      } else {
+        timer.cancel();
+        setState(() {
+          _typewriterFinished = true;
+        });
       }
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _isSubmitting = false;
-        _errorMessage = 'Partner creation failed. Please try again.';
-      });
-    }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: EdenTheme.bgPrimary,
-      body: Stack(
-        children: [
-          // Ambient Breathing Background Orbs
-          Positioned.fill(child: _buildBackgroundOrbs()),
-          
-          SafeArea(
-            child: _isLoading
-                ? _buildLoadingState()
-                : FadeTransition(
-                    opacity: _fadeAnimation,
-                    child: SlideTransition(
-                      position: _slideAnimation,
-                      child: Center(
-                        child: SingleChildScrollView(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _buildQuestionCard(),
-                              if (_errorMessage != null) ...[
-                                const SizedBox(height: 16),
-                                _buildErrorPanel(),
-                              ],
-                            ],
-                          ),
-                        ),
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0A0F),
+        body: Stack(
+          children: [
+            // Ambient breathing background
+            Positioned.fill(child: const _AmbientBackground()),
+            
+            SafeArea(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    switchInCurve: Curves.easeInOut,
+                    switchOutCurve: Curves.easeInOut,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(
+                        opacity: animation,
+                        child: child,
+                      );
+                    },
+                    child: _isComplete
+                        ? _buildFirstImpressionMoment()
+                        : (_isLoading
+                            ? const PulsingLoadingState()
+                            : SingleChildScrollView(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    QuestionCard(
+                                      key: ValueKey<int>(_currentStep),
+                                      config: onboardingQuestions[_currentStep],
+                                      onAnswer: _submitAnswer,
+                                    ),
+                                    if (_errorMessage != null) ...[
+                                      const SizedBox(height: 24),
+                                      _buildErrorPanel(),
+                                    ],
+                                  ],
+                                ),
+                              )),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFirstImpressionMoment() {
+    return Column(
+      key: const ValueKey('first_impression'),
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // Partner name at the top
+        Text(
+          _partnerName ?? 'Companion',
+          style: GoogleFonts.cormorantGaramond(
+            fontSize: 28,
+            fontWeight: FontWeight.w300,
+            color: EdenTheme.accentSecondary,
+            letterSpacing: -0.2,
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 48),
+        
+        // Typewriter first message
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 120),
+          child: Text(
+            _displayedText,
+            style: GoogleFonts.cormorantGaramond(
+              fontSize: 24,
+              fontWeight: FontWeight.w300,
+              color: EdenTheme.textPrimary,
+              height: 1.4,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+        const SizedBox(height: 64),
+        
+        // Fading continue button
+        AnimatedOpacity(
+          opacity: _typewriterFinished ? 1.0 : 0.0,
+          duration: const Duration(milliseconds: 600),
+          child: IgnorePointer(
+            ignoring: !_typewriterFinished,
+            child: InkWell(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                context.go('/chat');
+              },
+              borderRadius: BorderRadius.circular(20),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                    decoration: BoxDecoration(
+                      color: EdenTheme.bgSurface.withValues(alpha: 0.60),
+                      border: Border.all(color: EdenTheme.textPrimary.withValues(alpha: 0.07), width: 0.6),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'continue',
+                      style: GoogleFonts.jost(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
+                        color: EdenTheme.textPrimary.withValues(alpha: 0.78),
+                        letterSpacing: 1.0,
                       ),
                     ),
                   ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBackgroundOrbs() {
-    return const _AmbientBackground();
-  }
-
-  Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(
-              strokeWidth: 1.5,
-              valueColor: AlwaysStoppedAnimation(EdenTheme.accentPrimary),
-            ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            _isSubmitting ? 'generating companion…' : 'gathering presence…',
-            style: EdenTheme.bodySmall.copyWith(color: EdenTheme.textSecondary),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQuestionCard() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(24),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
-        child: Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: EdenTheme.bgSurface.withValues(alpha: 0.55),
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: EdenTheme.textPrimary.withValues(alpha: 0.08),
-              width: 0.8,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 24,
-                offset: const Offset(0, 8),
+                ),
               ),
-            ],
-          ),
-          padding: const EdgeInsets.all(28.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Eyebrow step label (clean, airy)
-              Text(
-                'QUESTION ${(_currentStep ?? 0) + 1} OF 9',
-                style: EdenTheme.labelSmall.copyWith(color: EdenTheme.accentSecondary),
-              ),
-              const SizedBox(height: 12),
-              // Question text in Garamond
-              Text(
-                _questionText ?? '',
-                style: EdenTheme.displaySmall,
-              ),
-              const SizedBox(height: 32),
-              
-              if (_questionType == 'open')
-                _buildOpenInput()
-              else
-                _buildMultipleChoiceOptions(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOpenInput() {
-    final bool isEmpty = _textController.text.trim().isEmpty;
-    return Column(
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            color: EdenTheme.bgPrimary.withValues(alpha: 0.6),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: EdenTheme.textSecondary.withValues(alpha: 0.15)),
-          ),
-          child: TextField(
-            controller: _textController,
-            style: EdenTheme.bodyMedium,
-            cursorColor: EdenTheme.accentPrimary,
-            textCapitalization: TextCapitalization.sentences,
-            maxLines: 3,
-            minLines: 1,
-            decoration: InputDecoration(
-              hintText: 'Type your answer here...',
-              hintStyle: EdenTheme.bodyMedium.copyWith(color: EdenTheme.textTertiary),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-              border: InputBorder.none,
             ),
-            onChanged: (text) => setState(() {}),
-          ),
-        ),
-        const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          height: 52,
-          child: ElevatedButton(
-            onPressed: (isEmpty || _isSubmitting)
-                ? null
-                : () => _submitAnswer(_textController.text.trim()),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: EdenTheme.accentPrimary,
-              foregroundColor: EdenTheme.bgPrimary,
-              disabledBackgroundColor: EdenTheme.accentPrimary.withValues(alpha: 0.3),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              elevation: 0,
-            ),
-            child: _isSubmitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
-                      valueColor: AlwaysStoppedAnimation(EdenTheme.bgPrimary),
-                    ),
-                  )
-                : Text(
-                    'Continue',
-                    style: EdenTheme.bodyMedium.copyWith(fontWeight: FontWeight.w600, color: EdenTheme.bgPrimary),
-                  ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildMultipleChoiceOptions() {
-    return Column(
-      children: _options.map((opt) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 12.0),
-          child: SizedBox(
-            width: double.infinity,
-            height: 54,
-            child: OutlinedButton(
-              onPressed: _isSubmitting ? null : () => _submitAnswer(opt),
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: EdenTheme.textSecondary.withValues(alpha: 0.2)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                backgroundColor: EdenTheme.bgPrimary.withValues(alpha: 0.3),
-              ),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  opt,
-                  style: EdenTheme.bodyMedium.copyWith(
-                    color: EdenTheme.textPrimary.withValues(alpha: 0.9),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
   Widget _buildErrorPanel() {
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: EdenTheme.destructive.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: EdenTheme.destructive.withValues(alpha: 0.25)),
+        color: EdenTheme.destructive.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: EdenTheme.destructive.withValues(alpha: 0.2)),
       ),
       child: Text(
         _errorMessage!,
-        style: EdenTheme.bodySmall.copyWith(color: EdenTheme.destructive),
+        style: GoogleFonts.plusJakartaSans(
+          color: EdenTheme.destructive.withValues(alpha: 0.9),
+          fontSize: 14,
+        ),
+        textAlign: TextAlign.center,
       ),
     );
   }
 }
 
-// --- breathing ambient backgrounds helper ---
+// --- Question Configuration ---
+const List<QuestionConfig> onboardingQuestions = [
+  QuestionConfig(
+    step: 0,
+    question: "What should I call you?",
+    type: QuestionType.openText,
+  ),
+  QuestionConfig(
+    step: 1,
+    question: "What made you come here today?",
+    type: QuestionType.openText,
+  ),
+  QuestionConfig(
+    step: 2,
+    question: "When you really connect with someone — what does that feel like for you?",
+    type: QuestionType.openText,
+  ),
+  QuestionConfig(
+    step: 3,
+    question: "Do you tend to have long deep conversations or quick check-ins? Or something in between?",
+    type: QuestionType.multipleChoice,
+    options: ["long and deep", "quick and light", "it depends"],
+  ),
+  QuestionConfig(
+    step: 4,
+    question: "How much do you usually share with people you're close to?",
+    type: QuestionType.multipleChoice,
+    options: ["a lot — I go deep", "some things — when it feels right", "not much — I'm more private"],
+  ),
+  QuestionConfig(
+    step: 5,
+    question: "What kind of humor lands for you?",
+    type: QuestionType.multipleChoice,
+    options: ["dry and deadpan", "warm and silly", "dark and honest", "I'm not really a humor person"],
+  ),
+  QuestionConfig(
+    step: 6,
+    question: "What kind of connection are you hoping for here?",
+    type: QuestionType.multipleChoice,
+    options: ["someone to talk to", "a real friendship", "something that might become more", "I'm not sure yet"],
+  ),
+  QuestionConfig(
+    step: 7,
+    question: "Tell me one thing about yourself that you don't usually lead with.",
+    type: QuestionType.openText,
+  ),
+  QuestionConfig(
+    step: 8,
+    question: "Is there anything you'd want someone to know before getting to know you?",
+    type: QuestionType.openText,
+    optional: true,
+  ),
+];
+
+// --- Pulsing Loading State Helper ---
+class PulsingLoadingState extends StatefulWidget {
+  const PulsingLoadingState({super.key});
+
+  @override
+  State<PulsingLoadingState> createState() => _PulsingLoadingStateState();
+}
+
+class _PulsingLoadingStateState extends State<PulsingLoadingState> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    _animation = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: FadeTransition(
+        opacity: _animation,
+        child: Text(
+          'meeting them...',
+          style: GoogleFonts.cormorantGaramond(
+            fontSize: 24,
+            fontWeight: FontWeight.w300,
+            color: EdenTheme.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// --- Breathing Ambient Background Helper ---
 class _AmbientBackground extends StatefulWidget {
   const _AmbientBackground();
 
