@@ -1,125 +1,160 @@
+# =============================================================================
+# api/ops.py — Ops / Admin API Router
+# =============================================================================
+
+import time
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
-from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
 from config import settings
-from core.proactive_engine import maybe_generate_for_user
 from memory.store import db
+from core.llm import check_llm_health
+from memory.consolidator import MemoryConsolidator
 
-router = APIRouter()
+logger = logging.getLogger(__name__)
 
-
-def _require_ops_access(x_admin_token: Optional[str] = Header(default=None)) -> None:
-    if settings.DEBUG:
-        return
-    if settings.ADMIN_DEBUG_TOKEN and x_admin_token == settings.ADMIN_DEBUG_TOKEN:
-        return
-    raise HTTPException(status_code=403, detail="Ops access denied")
+router = APIRouter(prefix="/ops")
 
 
-@router.get("/ops/summary")
-async def get_ops_summary(
-    x_admin_token: Optional[str] = Header(default=None),
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
+def require_ops_key(x_ops_key: Optional[str] = Header(default=None)) -> str:
+    """Dependency validator to ensure X-Ops-Key header matches configured OPS_SECRET_KEY."""
+    if not x_ops_key or x_ops_key != settings.OPS_SECRET_KEY:
+        raise HTTPException(status_code=403, detail="Ops access denied")
+    return x_ops_key
+
+
+@router.get("/health/deep")
+async def deep_health(
+    x_ops_key: str = Depends(require_ops_key),
 ):
-    _require_ops_access(x_admin_token)
+    """Deep health check of database, LLM gateway, memory index, queue, and user metrics."""
+    # 1. Database health
+    try:
+        db_health = db.get_database_health()
+    except Exception as exc:
+        db_health = {"ok": False, "error": str(exc), "tables": [], "row_counts": {}}
+
+    # 2. LLM health & latency
+    start_time = time.perf_counter()
+    try:
+        llm_res = await check_llm_health()
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        llm_ok = llm_res.get("status") == "ok"
+    except Exception as exc:
+        llm_ok = False
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+    # 3. Memory system health
+    try:
+        mem_stats = db.get_memory_system_stats()
+    except Exception as exc:
+        mem_stats = {"ok": False, "error": str(exc), "total_memories": 0, "avg_salience": 0.0}
+
+    # 4. Proactive queue health
+    try:
+        queue_stats = db.get_proactive_queue_stats()
+    except Exception as exc:
+        queue_stats = {"pending": 0, "oldest_pending_age_minutes": 0.0, "error": str(exc)}
+
+    # 5. Active users count (7 days)
+    try:
+        active_users_7d = db.get_active_users_count(days=7)
+    except Exception:
+        active_users_7d = 0
+
     return {
-        "users": len(db.list_users(limit=100000)),
-        "pairs": len(db.conn.execute("SELECT id FROM relationship_pairs").fetchall()),
-        "conversations": int(db.conn.execute("SELECT COUNT(*) AS count FROM conversations").fetchone()["count"]),
-        "messages": int(db.conn.execute("SELECT COUNT(*) AS count FROM messages").fetchone()["count"]),
-        "memories": int(db.conn.execute("SELECT COUNT(*) AS count FROM memory_index WHERE archived = 0").fetchone()["count"]),
-        "pending_proactive_events": int(
-            db.conn.execute(
-                "SELECT COUNT(*) AS count FROM proactive_events WHERE status = 'pending'"
-            ).fetchone()["count"]
-        ),
+        "database": db_health,
+        "llm": {"ok": llm_ok, "latency_ms": latency_ms},
+        "memory_system": mem_stats,
+        "proactive_queue": queue_stats,
+        "active_users_7d": active_users_7d,
     }
 
 
-@router.get("/ops/debug/users")
-async def debug_users(
-    limit: int = Query(default=25, ge=1, le=200),
-    x_admin_token: Optional[str] = Header(default=None),
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
+@router.get("/users")
+async def list_users(
+    page: int = Query(default=1, ge=1),
+    x_ops_key: str = Depends(require_ops_key),
 ):
-    _require_ops_access(x_admin_token)
-    return {"users": db.list_users(limit=limit)}
-
-
-@router.get("/ops/debug/pair/{pair_id}")
-async def debug_pair(
-    pair_id: str,
-    x_admin_token: Optional[str] = Header(default=None),
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    _require_ops_access(x_admin_token)
-    pair = db.get_pair_by_id(pair_id)
-    if not pair:
-        raise HTTPException(status_code=404, detail="Pair not found")
+    """Get paginated list of users and relationship statuses (50 per page)."""
+    users_list = db.list_ops_users_paginated(page=page, limit=50)
     return {
-        "pair": pair,
-        "relationship_state": db.get_relationship_state_snapshot(pair_id),
-        "facts": db.get_user_fact_rows(pair["user_id"], pair_id=pair_id, limit=20),
-        "conflicts": db.get_fact_conflicts(pair_id, limit=10),
-        "memories": db.list_pair_memories(pair_id, limit=20),
-        "narrative": db.get_current_narrative(pair["user_id"], pair_id=pair_id),
-        "recent_sessions": db.get_recent_conversation_summaries(pair_id, limit=6),
+        "users": users_list,
+        "page": page,
+        "limit": 50,
+        "count": len(users_list),
     }
 
 
-@router.get("/ops/events")
-async def ops_events(
-    kind: Optional[str] = Query(default=None),
-    severity: Optional[str] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-    x_admin_token: Optional[str] = Header(default=None),
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    _require_ops_access(x_admin_token)
-    return {"events": db.list_system_events(limit=limit, kind=kind, severity=severity)}
-
-
-@router.post("/ops/proactive/run")
-async def run_proactive_job(
-    user_id: Optional[str] = Query(default=None),
-    force: bool = Query(default=False),
-    limit: int = Query(default=4, ge=1, le=20),
-    x_admin_token: Optional[str] = Header(default=None),
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    _require_ops_access(x_admin_token)
-
-    created = []
-    if user_id:
-        created = await maybe_generate_for_user(user_id, limit=limit, force=force)
-    else:
-        for user in db.list_users(limit=settings.PROACTIVE_MAX_PER_RUN):
-            created.extend(await maybe_generate_for_user(user["id"], limit=1, force=force))
-            if len(created) >= limit:
-                break
-
-    return {"created": created, "count": len(created)}
-
-
-@router.get("/ops/export/{user_id}")
-async def export_user_data(
+@router.get("/export/{user_id}")
+async def export_user(
     user_id: str,
-    x_admin_token: Optional[str] = Header(default=None),
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
+    x_ops_key: str = Depends(require_ops_key),
 ):
-    is_admin = False
-    if settings.DEBUG:
-        is_admin = True
-    elif settings.ADMIN_DEBUG_TOKEN and x_admin_token == settings.ADMIN_DEBUG_TOKEN:
-        is_admin = True
-        
-    if not is_admin and identity.uid != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
-        
-    data = db.export_all_user_data(user_id)
-    if not data:
+    """GDPR-compliant data export of user profile, companion basics, memories, summaries, and events (excluding raw messages)."""
+    user_export = db.get_user_gdpr_export(user_id)
+    if not user_export:
         raise HTTPException(status_code=404, detail="User not found")
-    return data
+    return user_export
 
+
+@router.post("/trigger_consolidation/{user_id}")
+async def trigger_consolidation(
+    user_id: str,
+    x_ops_key: str = Depends(require_ops_key),
+):
+    """Trigger manual memory consolidation for a user."""
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    consolidator = MemoryConsolidator()
+    await consolidator.consolidate(user_id)
+    return {"status": "success", "message": "Memory consolidation triggered successfully"}
+
+
+@router.post("/reset_user/{user_id}")
+async def reset_user(
+    user_id: str,
+    x_confirm: str = Header(...),
+    x_ops_key: str = Depends(require_ops_key),
+):
+    """DESTRUCTIVE: Resets user onboarding and deletes all of their data except the users table entry. Guarded in production."""
+    if settings.ENVIRONMENT.lower() == "production":
+        raise HTTPException(status_code=403, detail="Resetting user data is blocked in the production environment")
+
+    if x_confirm != "yes-delete-everything":
+        raise HTTPException(status_code=400, detail="X-Confirm header must be exactly 'yes-delete-everything' to execute this action")
+
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    db.reset_user_data(user_id)
+    logger.info("Admin reset user data completed for user %s", user_id)
+    return {"status": "success", "message": f"User {user_id} data reset complete"}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    x_ops_key: str = Depends(require_ops_key),
+):
+    """GDPR erasure request to delete user and all associated data cascaded via foreign keys. Logs erasure event."""
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Audit log entry for erasure request
+    db.log_system_event(
+        kind="gdpr_erasure_user_deleted",
+        severity="info",
+        user_id=user_id,
+        payload={"deleted_user_id": user_id, "reason": "GDPR right to erasure request"},
+    )
+
+    db.delete_user(user_id)
+    logger.info("Admin GDPR erasure completed for user %s", user_id)
+    return {"status": "success", "message": f"User {user_id} and all related data deleted successfully"}

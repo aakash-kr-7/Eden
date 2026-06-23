@@ -474,7 +474,7 @@ class ProactiveEngine:
                 logger.info(f"Delivering proactive message {event_id} to user {user_id}")
 
                 # Send Push Notification via FCM
-                queue_and_send_notification(
+                await queue_and_send_notification(
                     user_id=user_id,
                     pair_id=pair_id,
                     companion_id=companion_id,

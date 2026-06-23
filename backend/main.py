@@ -118,13 +118,6 @@ async def lifespan(app: FastAPI):
         logger.critical("Database connection and schema setup failed: %s", e)
         sys.exit(1)
 
-    # 3. Connect ChromaDB client
-    from memory.retriever import get_chroma_client
-    try:
-        get_chroma_client()
-        logger.info("ChromaDB client connected.")
-    except Exception as e:
-        logger.error("ChromaDB initialization failed: %s. Memory features may be degraded.", e)
 
     # 4. Initialize Firebase SDK Auth
     try:

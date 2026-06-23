@@ -719,6 +719,8 @@ class Database:
                 "onboarding_signals TEXT",
                 "onboarding_completed INTEGER DEFAULT 0",
                 "last_active_at DATETIME",
+                "fcm_token TEXT",
+                "notification_preferences TEXT",
             ],
             "companions": [
                 "status TEXT DEFAULT 'active'",
@@ -1249,6 +1251,200 @@ class Database:
             "UPDATE users SET last_active_at = ? WHERE id = ?",
             (_utcnow_iso(), user_id),
         )
+
+    def update_user_fcm_token(self, user_id: str, fcm_token: Optional[str]) -> None:
+        self.conn.execute(
+            "UPDATE users SET fcm_token = ? WHERE id = ?",
+            (fcm_token, user_id),
+        )
+
+    def update_user_notification_preferences(self, user_id: str, prefs: dict) -> None:
+        prefs_json = json.dumps(prefs)
+        self.conn.execute(
+            "UPDATE users SET notification_preferences = ? WHERE id = ?",
+            (prefs_json, user_id),
+        )
+
+    def get_user_notification_preferences(self, user_id: str) -> Optional[dict]:
+        row = self.conn.execute(
+            "SELECT notification_preferences FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if row and row["notification_preferences"]:
+            try:
+                return json.loads(row["notification_preferences"])
+            except json.JSONDecodeError:
+                pass
+        return None
+
+    def invalidate_fcm_token(self, fcm_token: str) -> None:
+        self.conn.execute(
+            "UPDATE users SET fcm_token = NULL WHERE fcm_token = ?",
+            (fcm_token,),
+        )
+
+    def get_database_health(self) -> dict:
+        tables = [
+            row["name"]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+        ]
+        row_counts = {}
+        for table in tables:
+            count = self.conn.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()["count"]
+            row_counts[table] = count
+        return {
+            "ok": True,
+            "tables": tables,
+            "row_counts": row_counts
+        }
+
+    def get_memory_system_stats(self) -> dict:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS total_memories, COALESCE(AVG(salience), 0.0) AS avg_salience FROM memory_index WHERE archived = 0"
+        ).fetchone()
+        return {
+            "ok": True,
+            "total_memories": int(row["total_memories"]) if row else 0,
+            "avg_salience": float(row["avg_salience"]) if row else 0.0
+        }
+
+    def get_proactive_queue_stats(self) -> dict:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS pending, MIN(scheduled_for) AS oldest FROM proactive_events WHERE status = 'pending'"
+        ).fetchone()
+        pending = int(row["pending"]) if row else 0
+        oldest_str = row["oldest"] if row else None
+        oldest_pending_age_minutes = 0.0
+        if oldest_str:
+            try:
+                dt = datetime.fromisoformat(str(oldest_str).replace("Z", "").split(".")[0])
+                delta = datetime.utcnow() - dt
+                oldest_pending_age_minutes = max(0.0, delta.total_seconds() / 60.0)
+            except Exception:
+                pass
+        return {
+            "pending": pending,
+            "oldest_pending_age_minutes": oldest_pending_age_minutes
+        }
+
+    def get_active_users_count(self, days: int = 7) -> int:
+        threshold = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS count FROM users WHERE last_active_at >= ?",
+            (threshold,),
+        ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def list_ops_users_paginated(self, page: int = 1, limit: int = 50) -> list[dict]:
+        offset = (page - 1) * limit
+        query = """
+            SELECT 
+                u.id,
+                u.email,
+                u.onboarding_completed,
+                u.last_active_at,
+                COALESCE(p.name, c.name, rp.companion_id) AS partner_name,
+                rp.current_stage AS relationship_stage
+            FROM users u
+            LEFT JOIN relationship_pairs rp ON u.id = rp.user_id AND rp.is_primary = 1
+            LEFT JOIN companions c ON rp.companion_id = c.id
+            LEFT JOIN partners p ON u.id = p.user_id
+            ORDER BY COALESCE(u.last_active_at, u.created_at) DESC
+            LIMIT ? OFFSET ?
+        """
+        rows = self.conn.execute(query, (limit, offset)).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "email": r["email"],
+                "onboarding_complete": bool(r["onboarding_completed"]),
+                "partner_name": r["partner_name"] or "None",
+                "relationship_stage": r["relationship_stage"] or "None",
+                "last_active_at": r["last_active_at"]
+            }
+            for r in rows
+        ]
+
+    def get_user_gdpr_export(self, user_id: str) -> dict:
+        user = self.get_user(user_id)
+        if not user:
+            return {}
+            
+        preferences = self._row_to_dict(self.conn.execute("SELECT * FROM user_preferences WHERE user_id = ?", (user_id,)).fetchone())
+        
+        primary_pair = self.get_primary_pair(user_id)
+        partner = self.get_partner(user_id)
+        partner_basics = {}
+        if primary_pair:
+            partner_basics = {
+                "companion_id": primary_pair.get("companion_id"),
+                "relationship_label": primary_pair.get("relationship_label"),
+                "current_stage": primary_pair.get("current_stage"),
+                "introduced_at": primary_pair.get("introduced_at"),
+                "closeness_score": primary_pair.get("closeness_score"),
+                "trust_score": primary_pair.get("trust_score"),
+                "partner_name": partner.get("name") if partner else primary_pair.get("companion_id", "").title()
+            }
+            
+        memories = [dict(row) for row in self.conn.execute("SELECT * FROM memory_index WHERE user_id = ?", (user_id,)).fetchall()]
+        
+        conversations = [
+            {
+                "id": row["id"],
+                "companion_id": row["companion_id"],
+                "session_number": row["session_number"],
+                "started_at": row["started_at"],
+                "ended_at": row["ended_at"],
+                "topics_discussed": row["topics_discussed"],
+                "session_summary": row["session_summary"],
+                "summary": row["summary"]
+            }
+            for row in self.conn.execute("SELECT * FROM conversations WHERE user_id = ?", (user_id,)).fetchall()
+        ]
+        
+        relationship_events = [dict(row) for row in self.conn.execute("SELECT * FROM relationship_events WHERE user_id = ?", (user_id,)).fetchall()]
+        
+        return {
+            "profile": {
+                **user,
+                "preferences": preferences
+            },
+            "partner_basics": partner_basics,
+            "all_memories": memories,
+            "conversation_summaries": conversations,
+            "relationship_events": relationship_events
+        }
+
+    def reset_user_data(self, user_id: str) -> None:
+        with self.transaction():
+            self.conn.execute(
+                "UPDATE users SET onboarding_completed = 0, onboarding_signals = NULL, name = NULL, preferred_name = NULL, display_name = NULL WHERE id = ?",
+                (user_id,),
+            )
+            tables = [
+                "relationship_pairs",
+                "user_preferences",
+                "onboarding_responses",
+                "onboarding_sessions",
+                "device_registrations",
+                "proactive_events",
+                "conversations",
+                "messages",
+                "user_facts",
+                "companion_facts",
+                "entities",
+                "entity_relationships",
+                "emotional_events",
+                "behavioral_patterns",
+                "narrative_summaries",
+                "memory_index",
+                "partners",
+                "relationship_events"
+            ]
+            for table in tables:
+                self.conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
 
     def save_partner(
         self,

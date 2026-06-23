@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: List[str] = Field(default=["*"])
     FCM_SERVER_KEY: str = Field(default="")
     ADMIN_DEBUG_TOKEN: str = Field(default="admin_secret")
+    OPS_SECRET_KEY: str = Field(default="ops_secret_default_key")
 
     # ── Additional Existing Settings (for compatibility) ───────────────────
     CHROMA_DB_PATH: str = Field(default=str(BACKEND_DIR / "chroma_db"))

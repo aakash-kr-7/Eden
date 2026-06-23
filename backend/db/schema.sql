@@ -30,7 +30,11 @@ CREATE TABLE IF NOT EXISTS users (
     relationship_label    TEXT DEFAULT 'friend',
 
     total_sessions        INTEGER DEFAULT 0,
-    total_messages        INTEGER DEFAULT 0
+    total_messages        INTEGER DEFAULT 0,
+    onboarding_signals    TEXT,
+    onboarding_completed  INTEGER DEFAULT 0,
+    fcm_token             TEXT,
+    notification_preferences TEXT
 );
 
 
