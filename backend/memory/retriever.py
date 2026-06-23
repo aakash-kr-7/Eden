@@ -188,3 +188,62 @@ async def retrieve_relevant_memories(
             "emotional_weight": m.get("salience") or 0.5,
         })
     return compat_memories
+
+
+def get_memory_count(pair_id: str, user_id: Optional[str] = None) -> int:
+    try:
+        row = db.conn.execute("SELECT COUNT(*) as count FROM memory_index WHERE pair_id = ? AND archived = 0", (pair_id,)).fetchone()
+        return row["count"] if row else 0
+    except Exception:
+        return 0
+
+
+def delete_memory(pair_id: str, memory_id: str, user_id: Optional[str] = None) -> bool:
+    try:
+        db.conn.execute("DELETE FROM memory_index WHERE pair_id = ? AND (chroma_id = ? OR id = ?)", (pair_id, memory_id, memory_id))
+        return True
+    except Exception:
+        return False
+
+
+def update_memory_document(
+    pair_id: str,
+    memory_id: str,
+    *,
+    content: str,
+    title: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> bool:
+    try:
+        if title:
+            db.conn.execute(
+                "UPDATE memory_index SET content = ?, title = ? WHERE pair_id = ? AND (chroma_id = ? OR id = ?)",
+                (content, title, pair_id, memory_id, memory_id)
+            )
+        else:
+            db.conn.execute(
+                "UPDATE memory_index SET content = ? WHERE pair_id = ? AND (chroma_id = ? OR id = ?)",
+                (content, pair_id, memory_id, memory_id)
+            )
+        return True
+    except Exception:
+        return False
+
+
+def clear_all_memories(pair_id: str) -> bool:
+    try:
+        db.conn.execute("DELETE FROM memory_index WHERE pair_id = ?", (pair_id,))
+        return True
+    except Exception:
+        return False
+
+
+def format_memories_for_prompt(memories: list[dict]) -> str:
+    if not memories:
+        return ""
+    lines = []
+    for memory in memories:
+        emotion = f" [{memory['emotion_tag']}]" if memory.get("emotion_tag") else ""
+        title = memory.get("title") or "Episode"
+        lines.append(f"- {title}{emotion}: {memory['content']}")
+    return "\n".join(lines)

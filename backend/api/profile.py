@@ -1,270 +1,234 @@
 import logging
+import json
+from datetime import datetime
 from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
-from memory.retriever import clear_all_memories, delete_memory, get_memory_count, update_memory_document
-from memory.store import db
-from personality.registry import build_pair_payload
+from memory.relationship_engine import RelationshipEngine
+from memory.store import db, memory_store
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(prefix="/profile")
 
+class ProfileUpdate(BaseModel):
+    display_name: Optional[str] = None
+    communication_pace: Optional[str] = Field(None, pattern="^(gentle|balanced|frequent)$")
+    emotional_depth_preference: Optional[str] = None
 
-class UserPreferencesUpdate(BaseModel):
-    allow_memory_storage: Optional[bool] = None
-    show_memory_overview: Optional[bool] = None
-    allow_proactive_messages: Optional[bool] = None
-    allow_push_notifications: Optional[bool] = None
-    quiet_hours_start: Optional[int] = Field(None, ge=0, le=23)
-    quiet_hours_end: Optional[int] = Field(None, ge=0, le=23)
-    allow_sensitive_proactive: Optional[bool] = None
-
-
-class PairPreferencesUpdate(BaseModel):
-    proactive_enabled: Optional[bool] = None
-    proactive_cadence: Optional[str] = Field(None, pattern="^(gentle|balanced|frequent)$")
-    proactive_emotional_callbacks_enabled: Optional[bool] = None
-
-
-class DeviceTokenRegistration(BaseModel):
-    platform: str = Field(..., min_length=2, max_length=32)
-    push_token: str = Field(..., min_length=8, max_length=4096)
-
-
-class FactUpdate(BaseModel):
-    value: str = Field(..., min_length=1, max_length=500)
-
-
-class MemoryUpdate(BaseModel):
-    title: Optional[str] = Field(None, min_length=1, max_length=120)
-    content: Optional[str] = Field(None, min_length=1, max_length=2000)
-
-
-def _resolve_owned_pair(identity: AuthenticatedIdentity, pair_id: Optional[str]) -> Optional[dict]:
-    if not pair_id:
-        return db.get_primary_pair(identity.uid)
-    pair = db.get_pair_by_id(pair_id)
-    if not pair or pair["user_id"] != identity.uid:
-        raise HTTPException(status_code=404, detail="Relationship not found")
-    return pair
-
-
-@router.get("/me/profile")
+@router.get("/me")
 async def get_my_profile(
-    pair_id: Optional[str] = Query(default=None),
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     user = db.get_user(identity.uid)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    pair = _resolve_owned_pair(identity, pair_id)
-    preferences = db.get_or_create_user_preferences(identity.uid)
-    pairs = [build_pair_payload(item) for item in db.list_pairs_for_user(identity.uid)]
-
-    selected_pair = None
-    memory_count = 0
-    relationship_state = None
-    what_sol_knows = {}
-    fact_rows = []
-    fact_conflicts = []
-    memories = []
-    current_narrative = None
-
-    if pair:
-        selected_pair = build_pair_payload(pair)
-        memory_count = get_memory_count(pair["id"], user_id=identity.uid)
-        relationship_state = db.get_relationship_state_snapshot(pair["id"])
-        what_sol_knows = db.get_user_facts(identity.uid, pair_id=pair["id"])
-        fact_rows = db.get_user_fact_rows(identity.uid, pair_id=pair["id"], limit=40)
-        fact_conflicts = db.get_fact_conflicts(pair["id"], limit=10)
-        memories = db.list_pair_memories(pair["id"], limit=40)
-        current_narrative = db.get_current_narrative(identity.uid, pair_id=pair["id"])
-
+    primary = db.get_primary_pair(identity.uid)
+    partner_basics = {}
+    if primary:
+        partner = db.get_partner(identity.uid) or {}
+        introduced_str = primary.get("introduced_at") or primary.get("created_at")
+        days_together = 1
+        if introduced_str:
+            try:
+                intro_dt = datetime.fromisoformat(str(introduced_str).split(".")[0])
+                days_together = max(1, (datetime.utcnow() - intro_dt).days)
+            except Exception:
+                pass
+        
+        partner_basics = {
+            "name": partner.get("name") or primary.get("companion_id", "").title(),
+            "stage": primary.get("current_stage") or "new",
+            "days_together": days_together,
+        }
+    
     return {
         "user": {
             "id": user["id"],
-            "name": user.get("preferred_name") or user.get("name") or user.get("display_name"),
-            "email": user.get("email"),
             "display_name": user.get("display_name"),
+            "email": user.get("email"),
+            "preferred_name": user.get("preferred_name"),
             "timezone": user.get("timezone"),
-            "created_at": user.get("created_at"),
-            "total_sessions": user.get("total_sessions", 0),
-            "total_messages": user.get("total_messages", 0),
             "onboarding_completed": bool(user.get("onboarding_completed", 0)),
         },
-        "preferences": preferences,
-        "pairs": pairs,
-        "selected_pair": selected_pair,
-        "memory_count": memory_count,
-        "relationship_state": relationship_state,
-        "what_sol_knows": what_sol_knows,
-        "fact_rows": fact_rows,
-        "fact_conflicts": fact_conflicts,
-        "memories": memories,
-        "current_narrative": current_narrative,
+        "partner": partner_basics
     }
 
-
-@router.get("/me/pairs/{pair_id}/memories")
-async def get_pair_memories(
-    pair_id: str,
-    limit: int = Query(default=40, ge=1, le=100),
+@router.get("/relationship")
+async def get_relationship_details(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    pair = _resolve_owned_pair(identity, pair_id)
+    engine = RelationshipEngine()
+    summary = await engine.get_relationship_summary(identity.uid)
+    return summary
+
+@router.patch("/me")
+async def update_profile(
+    payload: ProfileUpdate,
+    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
+):
+    if payload.display_name is not None:
+        db.conn.execute(
+            "UPDATE users SET display_name = ? WHERE id = ?",
+            (payload.display_name, identity.uid)
+        )
+        
+    if payload.communication_pace is not None:
+        primary = db.get_primary_pair(identity.uid)
+        if primary:
+            db.conn.execute(
+                "UPDATE relationship_pairs SET proactive_cadence = ? WHERE id = ?",
+                (payload.communication_pace, primary["id"])
+            )
+            
+    if payload.emotional_depth_preference is not None:
+        user = db.get_user(identity.uid)
+        if user:
+            try:
+                signals = json.loads(user.get("onboarding_signals") or "{}")
+            except Exception:
+                signals = {}
+            signals["depth_preference"] = payload.emotional_depth_preference
+            db.conn.execute(
+                "UPDATE users SET onboarding_signals = ? WHERE id = ?",
+                (json.dumps(signals), identity.uid)
+            )
+            
+    user = db.get_user(identity.uid)
+    primary = db.get_primary_pair(identity.uid)
+    partner = db.get_partner(identity.uid) or {}
+    stage = primary.get("current_stage") or "new" if primary else "new"
+    
     return {
-        "pair": build_pair_payload(pair),
-        "memories": db.list_pair_memories(pair["id"], limit=limit),
+        "success": True,
+        "user": {
+            "id": user["id"],
+            "display_name": user.get("display_name"),
+            "email": user.get("email"),
+            "preferred_name": user.get("preferred_name"),
+            "timezone": user.get("timezone"),
+        },
+        "partner": {
+            "name": partner.get("name") or (primary.get("companion_id", "").title() if primary else "Companion"),
+            "stage": stage
+        }
     }
 
-
-@router.patch("/me/preferences")
-async def update_my_preferences(
-    payload: UserPreferencesUpdate,
+@router.get("/memories")
+async def get_memories(
+    type: Optional[str] = Query(None),
+    sort: str = Query("recent"),  # salience | recent | recalled
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    updated = db.update_user_preferences(identity.uid, **payload.model_dump(exclude_none=True))
-    return {"preferences": updated}
+    primary = db.get_primary_pair(identity.uid)
+    if not primary:
+        return {"memories": [], "total": 0, "page": page, "limit": limit}
+    pair_id = primary["id"]
+    
+    query = "FROM memory_index WHERE pair_id = ? AND archived = 0"
+    params = [pair_id]
+    
+    if type:
+        query += " AND memory_type = ?"
+        params.append(type)
+        
+    count_row = db.conn.execute(f"SELECT COUNT(*) as count {query}", params).fetchone()
+    total = count_row["count"] if count_row else 0
+    
+    if sort == "salience":
+        query += " ORDER BY salience DESC, id DESC"
+    elif sort == "recalled":
+        query += " ORDER BY last_recalled_at DESC, id DESC"
+    else:  # recent
+        query += " ORDER BY created_at DESC, id DESC"
+        
+    offset = (page - 1) * limit
+    query += " LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    
+    rows = db.conn.execute(f"SELECT * {query}", params).fetchall()
+    
+    memories = []
+    for r in rows:
+        d = dict(r)
+        if d.get("tags"):
+            try:
+                d["tags"] = json.loads(d["tags"])
+            except Exception:
+                d["tags"] = []
+        else:
+            d["tags"] = []
+            
+        d.pop("source_message_ids", None)
+        d.pop("source_message_id", None)
+        d.pop("decay_factor", None)
+        d.pop("user_id", None)
+        d.pop("pair_id", None)
+        d.pop("companion_id", None)
+        
+        memories.append(d)
+        
+    return {
+        "memories": memories,
+        "total": total,
+        "page": page,
+        "limit": limit
+    }
 
-
-@router.patch("/me/pairs/{pair_id}/preferences")
-async def update_pair_preferences(
-    pair_id: str,
-    payload: PairPreferencesUpdate,
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    pair = _resolve_owned_pair(identity, pair_id)
-    updated = db.update_pair_proactive_settings(pair["id"], **payload.model_dump(exclude_none=True))
-    return {"pair": build_pair_payload(updated or pair)}
-
-
-@router.post("/me/device-token")
-@router.post("/profile/device")
-async def register_device_token(
-    payload: DeviceTokenRegistration,
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    registration = db.register_device_token(
-        user_id=identity.uid,
-        platform=payload.platform.strip().lower(),
-        push_token=payload.push_token.strip(),
-    )
-    return {"device_registration": registration}
-
-
-@router.delete("/me/pairs/{pair_id}/memories/{memory_id}")
-async def remove_pair_memory(
-    pair_id: str,
+@router.delete("/memories/{memory_id}")
+async def delete_vault_memory(
     memory_id: str,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    pair = _resolve_owned_pair(identity, pair_id)
-    deleted_vector = delete_memory(pair["id"], memory_id, user_id=identity.uid)
-    deleted_record = db.delete_memory_record(pair["id"], memory_id)
-    return {"deleted": deleted_vector or deleted_record}
+    primary = db.get_primary_pair(identity.uid)
+    if not primary:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    pair_id = primary["id"]
+    
+    row = db.conn.execute(
+        "SELECT id FROM memory_index WHERE pair_id = ? AND (chroma_id = ? OR id = ?)",
+        (pair_id, memory_id, memory_id)
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Memory not found")
+        
+    await memory_store.delete(memory_id)
+    return {"success": True, "deleted": True}
 
-
-@router.patch("/me/pairs/{pair_id}/facts/{fact_id}")
-async def correct_pair_fact(
-    pair_id: str,
-    fact_id: int,
-    payload: FactUpdate,
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    pair = _resolve_owned_pair(identity, pair_id)
-    updated = db.update_user_fact_value(
-        user_id=identity.uid,
-        pair_id=pair["id"],
-        fact_id=fact_id,
-        value=payload.value,
-    )
-    if not updated:
-        raise HTTPException(status_code=404, detail="Fact not found")
-    return {"fact": updated}
-
-
-@router.patch("/me/pairs/{pair_id}/memories/{memory_id}")
-async def correct_pair_memory(
-    pair_id: str,
+@router.post("/memories/{memory_id}/pin")
+async def pin_vault_memory(
     memory_id: str,
-    payload: MemoryUpdate,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    pair = _resolve_owned_pair(identity, pair_id)
-    if payload.title is None and payload.content is None:
-        raise HTTPException(status_code=400, detail="Nothing to update")
-
-    current = next(
-        (
-            item for item in db.list_pair_memories(pair["id"], limit=100)
-            if item.get("chroma_id") == memory_id
-        ),
-        None,
-    )
-    if not current:
-        raise HTTPException(status_code=404, detail="Memory not found")
-
-    title = payload.title if payload.title is not None else current.get("title")
-    content = payload.content if payload.content is not None else current.get("content")
-    updated_vector = update_memory_document(
-        pair["id"],
-        memory_id,
-        title=title,
-        content=content or "",
-        user_id=identity.uid,
-    )
-    updated_record = db.update_memory_record(
-        pair_id=pair["id"],
-        chroma_id=memory_id,
-        title=payload.title,
-        content=payload.content,
-    )
-    if not updated_record:
-        raise HTTPException(status_code=404, detail="Memory not found")
-    updated_record["vector_updated"] = updated_vector
-    return {"memory": updated_record}
-
-
-@router.post("/me/pairs/{pair_id}/reset")
-async def reset_pair_data(
-    pair_id: str,
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    pair = _resolve_owned_pair(identity, pair_id)
-    clear_all_memories(pair["id"])
+    primary = db.get_primary_pair(identity.uid)
+    if not primary:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    pair_id = primary["id"]
     
-    with db.transaction():
-        cleared = db.reset_pair_memory(pair["id"])
-        db.log_system_event(
-            "pair_memory_reset",
-            "info",
-            user_id=identity.uid,
-            pair_id=pair["id"],
-            payload={"cleared": cleared},
-        )
-    return {"reset": True, "cleared": cleared}
-
-
-@router.delete("/me/account")
-async def delete_my_account(
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    pairs = db.list_pairs_for_user(identity.uid)
+    row = db.conn.execute(
+        "SELECT salience FROM memory_index WHERE pair_id = ? AND (chroma_id = ? OR id = ?)",
+        (pair_id, memory_id, memory_id)
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Memory not found")
+        
+    current_salience = float(row["salience"] or 0.0)
+    new_salience = max(current_salience, 0.85)
     
-    with db.transaction():
-        db.log_system_event(
-            "account_deleted",
-            "warning",
-            user_id=identity.uid,
-            payload={"pair_count": len(pairs)},
+    if memory_id.isdigit():
+        db.conn.execute(
+            "UPDATE memory_index SET is_pinned = 1, salience = ? WHERE id = ?",
+            (new_salience, int(memory_id))
         )
-        for pair in pairs:
-            clear_all_memories(pair["id"])
-
-        deleted = db.delete_user_account(identity.uid)
-    return {"deleted": True, "counts": deleted}
+    else:
+        db.conn.execute(
+            "UPDATE memory_index SET is_pinned = 1, salience = ? WHERE chroma_id = ?",
+            (new_salience, str(memory_id))
+        )
+        
+    return {"success": True, "pinned": True, "salience": new_salience}
