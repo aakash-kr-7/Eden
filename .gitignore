@@ -61,3 +61,8 @@ backend/verify_step3.py
 backend/verify_step4.py
 backend/verify_coalescing.py
 backend/verify_notifications.py
+backend/verify_proactive_engine.py
+backend/verify_life_simulator.py
+backend/verify_memory_rebuild.py
+backend/verify_relationship_profile.py
+backend/verify_session_bootstrap.py

@@ -34,7 +34,11 @@ def _message_list_from_payload(payload_dict: dict, fallback_preview: str) -> lis
 
 
 def _delivery_status(outcome: str) -> str:
-    return "sent" if outcome == "sent" else "failed"
+    if outcome == "sent":
+        return "sent"
+    if outcome == "no_tokens":
+        return "no_tokens"
+    return "failed"
 
 
 def queue_and_send_notification(
@@ -73,6 +77,13 @@ def queue_and_send_notification(
         payload_dict=payload,
     ) or notification
 
+    if app_active:
+        return db.mark_notification_status(
+            notification["id"],
+            "skipped",
+            error_message="User is active on screen",
+        ) or notification
+
     from core.proactive_engine import _send_push_hooks
 
     dispatch_preview = message_preview
@@ -93,17 +104,50 @@ def queue_and_send_notification(
         if len(messages) > 1:
             dispatch_preview = f"{sender_name}: [{len(messages)} messages] {messages[-1]}"
             dispatch_payload = {
-                **payload,
+                **previous_payload,
                 "message_preview": dispatch_preview,
                 "messages": messages,
                 "grouped_count": len(messages),
                 "coalesced": True,
-                "coalesced_with_notification_id": recent["id"],
             }
-            notification = db.update_queued_notification_payload(
-                notification["id"],
+            # Update the FIRST (recent) notification in DB
+            db.update_queued_notification_payload(
+                recent["id"],
                 message_preview=dispatch_preview,
                 payload_dict=dispatch_payload,
+            )
+
+            # Send the updated notification (using first notification id)
+            outcome = _send_push_hooks(
+                user_id=user_id,
+                title=sender_name,
+                body=dispatch_preview,
+                data={
+                    "pair_id": pair_id,
+                    "companion_id": companion_id,
+                    "sender_name": sender_name,
+                    "message_preview": dispatch_preview,
+                    "conversation_id": str(dispatch_payload.get("conversation_id") or ""),
+                    "timestamp": queued_at,
+                    "notification_id": recent["id"],
+                    "app_active": str(app_active).lower(),
+                    "coalesced": "true",
+                    "grouped_count": str(len(messages)),
+                },
+            )
+
+            # Mark the FIRST notification status
+            db.mark_notification_status(
+                recent["id"],
+                _delivery_status(outcome),
+                error_message=None if outcome == "sent" else outcome,
+            )
+
+            # Mark the CURRENT (second) notification as 'coalesced' and return it
+            return db.mark_notification_status(
+                notification["id"],
+                "coalesced",
+                error_message=f"Coalesced into notification {recent['id']}",
             ) or notification
 
     outcome = _send_push_hooks(

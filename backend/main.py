@@ -78,6 +78,22 @@ async def run_proactive_engine():
         logger.error("Error encountered in proactive engine background task: %s", exc, exc_info=True)
 
 
+async def run_proactive_delivery():
+    """Periodically check and deliver pending proactive outreach messages."""
+    logger.info("Executing proactive delivery background check...")
+    if not settings.PROACTIVE_ENGINE_ENABLED:
+        logger.info("Proactive engine delivery skipped (disabled globally).")
+        return
+
+    try:
+        from core.proactive_engine import ProactiveEngine
+        engine = ProactiveEngine()
+        await engine.deliver_pending()
+        logger.info("Proactive delivery background check complete.")
+    except Exception as exc:
+        logger.error("Error encountered in proactive delivery background task: %s", exc, exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── STARTUP ────────────────────────────────────────────────────────────
@@ -131,6 +147,13 @@ async def lifespan(app: FastAPI):
         "interval",
         seconds=600,
         id="proactive_engine",
+        replace_existing=True
+    )
+    scheduler.add_job(
+        run_proactive_delivery,
+        "interval",
+        seconds=300,
+        id="proactive_delivery",
         replace_existing=True
     )
     scheduler.start()

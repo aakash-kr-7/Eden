@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = Field(default="development")
     ALLOWED_ORIGINS: List[str] = Field(default=["*"])
     FCM_SERVER_KEY: str = Field(default="")
+    ADMIN_DEBUG_TOKEN: str = Field(default="admin_secret")
 
     # ── Additional Existing Settings (for compatibility) ───────────────────
     CHROMA_DB_PATH: str = Field(default=str(BACKEND_DIR / "chroma_db"))

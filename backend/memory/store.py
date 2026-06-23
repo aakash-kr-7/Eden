@@ -3587,7 +3587,7 @@ class Database:
             FROM queued_notifications
             WHERE pair_id = ?
               AND datetime(timestamp) >= datetime(?)
-              AND status IN ('pending', 'sent', 'failed')
+              AND status IN ('pending', 'sent', 'failed', 'no_tokens')
         """
         if exclude_id:
             query += " AND id != ?"
@@ -3946,6 +3946,78 @@ class Database:
                 (pair_id, str(memory_id), str(memory_id))
             ).fetchone()
         return row is not None
+
+    def has_queued_proactive_in_last_hours(self, user_id: str, hours: float = 4.0) -> bool:
+        threshold = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        row = self.conn.execute(
+            """
+            SELECT 1
+            FROM proactive_events
+            WHERE user_id = ?
+              AND status != 'cancelled'
+              AND (created_at >= ? OR scheduled_for >= ?)
+            LIMIT 1
+            """,
+            (user_id, threshold, threshold),
+        ).fetchone()
+        return row is not None
+
+    def list_all_due_proactive_events(self) -> list[dict]:
+        now = _utcnow_iso()
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM proactive_events
+            WHERE status = 'pending'
+              AND datetime(COALESCE(scheduled_for, created_at)) <= datetime(?)
+            ORDER BY scheduled_for ASC, created_at ASC
+            """,
+            (now,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_candidate_callback_memories(self, pair_id: str, days_threshold: float = 5.0) -> list[dict]:
+        threshold = (datetime.utcnow() - timedelta(days=days_threshold)).isoformat()
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM memory_index
+            WHERE pair_id = ?
+              AND archived = 0
+              AND salience > 0.6
+              AND (last_recalled_at IS NULL OR datetime(last_recalled_at) < datetime(?))
+            ORDER BY strength DESC, created_at DESC
+            """,
+            (pair_id, threshold),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_last_conversation_for_pair(self, pair_id: str) -> Optional[dict]:
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM conversations
+            WHERE pair_id = ?
+            ORDER BY last_message_at DESC, started_at DESC
+            LIMIT 1
+            """,
+            (pair_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_last_emotional_tone_for_conversation(self, conversation_id: str) -> Optional[str]:
+        row = self.conn.execute(
+            """
+            SELECT emotional_tone
+            FROM messages
+            WHERE conversation_id = ?
+              AND emotional_tone IS NOT NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (conversation_id,),
+        ).fetchone()
+        return row["emotional_tone"] if row else None
 
 
 class MemoryStore:
