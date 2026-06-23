@@ -3,10 +3,89 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import '../theme/eden_theme.dart';
 import '../models/models.dart';
 import '../main.dart';
+import '../widgets/message_bubble.dart';
+import '../widgets/typing_indicator.dart';
+import '../services/burst_playback_service.dart';
+
+// --- Riverpod State Management Providers ---
+
+class ConversationState {
+  final String? conversationId;
+  final List<Message> messages;
+  final bool hasMore;
+  final bool isLoadingMore;
+
+  const ConversationState({
+    this.conversationId,
+    this.messages = const [],
+    this.hasMore = true,
+    this.isLoadingMore = false,
+  });
+
+  ConversationState copyWith({
+    String? conversationId,
+    List<Message>? messages,
+    bool? hasMore,
+    bool? isLoadingMore,
+  }) {
+    return ConversationState(
+      conversationId: conversationId ?? this.conversationId,
+      messages: messages ?? this.messages,
+      hasMore: hasMore ?? this.hasMore,
+      isLoadingMore: isLoadingMore ?? this.isLoadingMore,
+    );
+  }
+}
+
+class ConversationNotifier extends StateNotifier<ConversationState> {
+  ConversationNotifier() : super(const ConversationState());
+
+  void init(String? conversationId, List<Message> messages) {
+    state = ConversationState(
+      conversationId: conversationId,
+      messages: messages,
+      hasMore: messages.length >= 20,
+      isLoadingMore: false,
+    );
+  }
+
+  void setConversationId(String conversationId) {
+    state = state.copyWith(conversationId: conversationId);
+  }
+
+  void addMessage(Message message) {
+    state = state.copyWith(messages: [message, ...state.messages]);
+  }
+
+  void addMessagesAtEnd(List<Message> oldMessages) {
+    state = state.copyWith(messages: [...state.messages, ...oldMessages]);
+  }
+
+  void setLoadingMore(bool loading) {
+    state = state.copyWith(isLoadingMore: loading);
+  }
+
+  void setHasMore(bool hasMore) {
+    state = state.copyWith(hasMore: hasMore);
+  }
+
+  void clear() {
+    state = const ConversationState();
+  }
+}
+
+final conversationProvider = StateNotifierProvider<ConversationNotifier, ConversationState>((ref) {
+  return ConversationNotifier();
+});
+
+final partnerStateProvider = StateProvider<Partner?>((ref) => null);
+
+final sessionProvider = StateProvider<SessionData?>((ref) => null);
+
+final typingProvider = StateProvider<bool>((ref) => false);
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -16,30 +95,28 @@ class ChatScreen extends ConsumerStatefulWidget {
 }
 
 class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObserver {
-  final List<Message> _messages = [];
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
 
   bool _isInitializing = true;
   bool _isSending = false;
-  bool _isCompanionTyping = false;
   String? _errorMessage;
-
-  String? _conversationId;
-  String _partnerName = 'Companion';
-  String _partnerMood = 'peaceful';
+  String? _proactiveIntroText;
+  double _headerOpacity = 0.0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _initializeChat());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scrollController.removeListener(_onScroll);
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
@@ -53,47 +130,111 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     }
   }
 
+  void _onScroll() {
+    if (_scrollController.hasClients) {
+      final position = _scrollController.position;
+      
+      // Pull to load more when reaching the top boundary
+      if (position.pixels >= position.maxScrollExtent - 100 &&
+          !position.outOfRange) {
+        _loadOlderMessages();
+      }
+
+      // Subtle partner name header fades in as user scrolls up
+      final offset = _scrollController.offset;
+      final double newOpacity = (offset / 80.0).clamp(0.0, 1.0);
+      if (newOpacity != _headerOpacity) {
+        setState(() {
+          _headerOpacity = newOpacity;
+        });
+      }
+    }
+  }
+
   Future<void> _initializeChat() async {
     try {
       final apiService = ref.read(apiServiceProvider);
 
-      // 1. Start Session / Load Partner Info
+      // 1. Load Session
       final session = await apiService.startSession();
-      if (!mounted) return;
-      setState(() {
-        _partnerName = session.partner.name;
-        _partnerMood = session.partner.currentMood ?? 'peaceful';
-      });
+      ref.read(sessionProvider.notifier).state = session;
+      ref.read(partnerStateProvider.notifier).state = session.partner;
 
-      // 2. Fetch Conversations to find current conversation ID
+      // 2. Fetch conversations to resolve current conversation ID
       final conversations = await apiService.getConversations();
-      if (conversations.isNotEmpty && mounted) {
+      String? conversationId;
+      List<Message> fetchedMessages = [];
+
+      if (conversations.isNotEmpty) {
         final mostRecent = conversations.first as Map<String, dynamic>;
-        _conversationId = mostRecent['id']?.toString();
+        conversationId = mostRecent['id']?.toString();
         
-        // 3. Load messages for this conversation
-        if (_conversationId != null) {
-          final fetched = await apiService.getMessages(_conversationId!);
-          if (mounted) {
-            setState(() {
-              _messages.addAll(fetched);
-            });
-          }
+        // 3. Load recent messages
+        if (conversationId != null) {
+          fetchedMessages = await apiService.getMessages(conversationId);
         }
       }
+
+      // Handle unread proactive messages first
+      if (session.pendingProactive.isNotEmpty) {
+        // Briefly show "[partner name] sent you something"
+        setState(() {
+          _proactiveIntroText = "${session.partner.name} sent you something";
+          _isInitializing = false;
+        });
+
+        await Future.delayed(const Duration(seconds: 2));
+
+        if (mounted) {
+          setState(() {
+            _proactiveIntroText = null;
+          });
+        }
+
+        // Merge proactive messages inline in the conversation with their original timestamps
+        final List<Message> mergedMessages = List.from(fetchedMessages);
+        for (var pm in session.pendingProactive) {
+          if (!mergedMessages.any((m) => m.id == pm.id)) {
+            mergedMessages.add(Message(
+              id: pm.id,
+              role: 'assistant',
+              content: pm.message,
+              sentAt: pm.sentAt,
+            ));
+          }
+        }
+        
+        // Sort descending (newest first for reverse list representation)
+        mergedMessages.sort((a, b) => b.sentAt.compareTo(a.sentAt));
+        ref.read(conversationProvider.notifier).init(conversationId, mergedMessages);
+
+        // Acknowledge proactive messages
+        for (var pm in session.pendingProactive) {
+          try {
+            await apiService.acknowledgeProactive(pm.id);
+          } catch (e) {
+            debugPrint("Failed to acknowledge proactive message: $e");
+          }
+        }
+      } else {
+        ref.read(conversationProvider.notifier).init(conversationId, fetchedMessages);
+        if (mounted) {
+          setState(() {
+            _isInitializing = false;
+          });
+        }
+      }
+
+      // 4. Focus input field
+      _inputFocusNode.requestFocus();
+      _scrollToBottom();
     } catch (e) {
       debugPrint('Error starting chat session: $e');
       setState(() {
         _errorMessage = 'could not connect to Eden. try again.';
+        _isInitializing = false;
       });
-    } finally {
-      if (mounted) {
-        setState(() => _isInitializing = false);
-        _scrollToBottom();
-      }
     }
-
-    _pollProactiveMessages();
   }
 
   Future<void> _pollProactiveMessages() async {
@@ -101,10 +242,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       final apiService = ref.read(apiServiceProvider);
       final proactive = await apiService.getPendingProactive();
       if (proactive.isNotEmpty && mounted) {
+        final convState = ref.read(conversationProvider);
         for (var pm in proactive) {
-          setState(() {
-            _messages.insert(
-              0,
+          if (!convState.messages.any((m) => m.id == pm.id)) {
+            ref.read(conversationProvider.notifier).addMessage(
               Message(
                 id: pm.id,
                 role: 'assistant',
@@ -112,7 +253,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
                 sentAt: pm.sentAt,
               ),
             );
-          });
+          }
           await apiService.acknowledgeProactive(pm.id);
         }
         _scrollToBottom();
@@ -120,9 +261,42 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     } catch (_) {}
   }
 
+  Future<void> _loadOlderMessages() async {
+    final state = ref.read(conversationProvider);
+    if (state.conversationId == null || !state.hasMore || state.isLoadingMore) {
+      return;
+    }
+
+    ref.read(conversationProvider.notifier).setLoadingMore(true);
+
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      final oldestMessageId = state.messages.isNotEmpty ? state.messages.last.id : null;
+      
+      final olderMessages = await apiService.getMessages(
+        state.conversationId!,
+        beforeId: oldestMessageId,
+        limit: 20,
+      );
+
+      if (olderMessages.isEmpty) {
+        ref.read(conversationProvider.notifier).setHasMore(false);
+      } else {
+        ref.read(conversationProvider.notifier).addMessagesAtEnd(olderMessages);
+        if (olderMessages.length < 20) {
+          ref.read(conversationProvider.notifier).setHasMore(false);
+        }
+      }
+    } catch (e) {
+      debugPrint("Error loading older messages: $e");
+    } finally {
+      ref.read(conversationProvider.notifier).setLoadingMore(false);
+    }
+  }
+
   Future<void> _sendMessage() async {
     final text = _inputController.text.trim();
-    if (text.isEmpty || _isSending || _isCompanionTyping) return;
+    if (text.isEmpty || _isSending) return;
 
     _inputController.clear();
     _inputFocusNode.requestFocus();
@@ -135,50 +309,78 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       sentAt: DateTime.now(),
     );
 
+    // 1. Add user message to list immediately (optimistic UI)
+    ref.read(conversationProvider.notifier).addMessage(userMessage);
+    _scrollToBottom();
+
     setState(() {
-      _messages.insert(0, userMessage);
       _isSending = true;
-      _isCompanionTyping = true;
       _errorMessage = null;
     });
-    _scrollToBottom();
 
     try {
       final apiService = ref.read(apiServiceProvider);
-      final response = await apiService.sendMessage(_conversationId, text);
+      final convState = ref.read(conversationProvider);
       
-      if (response.conversationId.isNotEmpty) {
-        _conversationId = response.conversationId;
+      // 2. Show typing indicator
+      ref.read(typingProvider.notifier).state = true;
+
+      // 3. Call api.sendMessage()
+      final response = await apiService.sendMessage(convState.conversationId, text);
+      
+      if (response.conversationId.isNotEmpty && convState.conversationId == null) {
+        ref.read(conversationProvider.notifier).setConversationId(response.conversationId);
       }
 
-      // Simulate typing speed based on reply length
-      final delay = (response.reply.length * 20).clamp(1000, 2500);
-      await Future.delayed(Duration(milliseconds: delay));
+      // 4. If burst response, display them with natural delays
+      final bursts = response.bursts;
+      if (bursts.isNotEmpty) {
+        final messages = bursts.map((b) => b.text).toList();
+        final delays = bursts.map((b) => b.preBurstDelayMs / 1000.0).toList();
 
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-          _isCompanionTyping = false;
-          _messages.insert(
-            0,
-            Message(
+        final burstService = ref.read(burstPlaybackServiceProvider);
+        await burstService.playBurst(
+          messages,
+          delays,
+          (msgText) {
+            // Display one by one
+            final partnerMessage = Message(
               id: UniqueKey().toString(),
               role: 'assistant',
-              content: response.reply,
+              content: msgText,
               sentAt: DateTime.now(),
-            ),
-          );
-        });
+            );
+            ref.read(conversationProvider.notifier).addMessage(partnerMessage);
+            _scrollToBottom();
+          },
+          (isTyping) {
+            // Typing indicator shows between each burst message
+            ref.read(typingProvider.notifier).state = isTyping;
+          },
+        );
+      } else {
+        // Fallback for single reply message
+        ref.read(typingProvider.notifier).state = false;
+        final partnerMessage = Message(
+          id: UniqueKey().toString(),
+          role: 'assistant',
+          content: response.reply,
+          sentAt: DateTime.now(),
+        );
+        ref.read(conversationProvider.notifier).addMessage(partnerMessage);
         _scrollToBottom();
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isSending = false;
-          _isCompanionTyping = false;
-          _errorMessage = 'failed to send message. check your network.';
-        });
-      }
+      debugPrint("Error sending message: $e");
+      setState(() {
+        _errorMessage = 'failed to send message. check your network.';
+      });
+      // Hide typing on error
+      ref.read(typingProvider.notifier).state = false;
+    } finally {
+      setState(() {
+        _isSending = false;
+      });
     }
   }
 
@@ -187,105 +389,158 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           0.0,
-          duration: const Duration(milliseconds: 250),
+          duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
       }
     });
   }
 
+  bool _shouldShowTimestamp(List<Message> messages, int index) {
+    if (index == messages.length - 1) {
+      return true; // oldest message
+    }
+    final current = messages[index];
+    final next = messages[index + 1];
+    final difference = current.sentAt.difference(next.sentAt).abs();
+    return difference.inHours >= 1;
+  }
+
+  String _formatMood(String? mood) {
+    if (mood == null || mood.trim().isEmpty) return 'present';
+    final firstMood = mood.split(',').first.trim().toLowerCase();
+    if (firstMood == 'neutral' || firstMood == 'peaceful') {
+      return 'present';
+    }
+    return '$firstMood today';
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Render transient proactive introduction state
+    if (_proactiveIntroText != null) {
+      return Scaffold(
+        backgroundColor: EdenTheme.bgPrimary,
+        body: Center(
+          child: TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0.0, end: 1.0),
+            duration: const Duration(milliseconds: 800),
+            curve: Curves.easeIn,
+            builder: (context, value, child) {
+              return Opacity(
+                opacity: value,
+                child: Text(
+                  _proactiveIntroText!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontFamily: EdenTheme.fontDisplay,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w300,
+                    color: EdenTheme.textPrimary,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    }
+
+    final partner = ref.watch(partnerStateProvider);
+    final conversationState = ref.watch(conversationProvider);
+
     return Scaffold(
       backgroundColor: EdenTheme.bgPrimary,
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _buildTopBar(),
-            Expanded(child: _buildMessageList()),
-            if (_errorMessage != null) _buildErrorBanner(),
-            _buildInputArea(),
+            Column(
+              children: [
+                Expanded(child: _buildMessageList(conversationState)),
+                if (_errorMessage != null) _buildErrorBanner(),
+                _buildInputArea(partner),
+              ],
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _buildTopHeader(partner),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopHeader(Partner? partner) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 10, 12, 10),
-      decoration: const BoxDecoration(
-        color: EdenTheme.bgSurface,
-        border: Border(bottom: BorderSide(color: EdenTheme.bgElevated, width: 0.8)),
-      ),
-      child: Row(
+      height: 56,
+      color: Colors.transparent,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Stack(
+        alignment: Alignment.center,
         children: [
-          // Avatar
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: EdenTheme.bgElevated,
-              border: Border.all(color: EdenTheme.accentPrimary.withValues(alpha: 0.35), width: 1.2),
-            ),
-            child: Center(
-              child: Text(
-                _partnerName.isNotEmpty ? _partnerName[0].toUpperCase() : 'E',
-                style: EdenTheme.bodyLarge.copyWith(fontWeight: FontWeight.bold, color: EdenTheme.accentPrimary),
+          Opacity(
+            opacity: _headerOpacity,
+            child: Text(
+              partner != null ? "${partner.name} · ${_formatMood(partner.currentMood)}" : "",
+              style: const TextStyle(
+                fontFamily: EdenTheme.fontDisplay,
+                fontSize: 18,
+                fontWeight: FontWeight.w300,
+                color: EdenTheme.textPrimary,
               ),
             ),
           ),
-          const SizedBox(width: 14),
-          // Name and Status
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+          Positioned(
+            right: 0,
+            child: Row(
               children: [
-                Text(
-                  _partnerName,
-                  style: EdenTheme.emphasisLarge,
+                IconButton(
+                  icon: const Icon(Icons.bookmark_border_rounded, size: 20),
+                  color: EdenTheme.textSecondary.withValues(alpha: 0.6),
+                  onPressed: () => context.push('/memories'),
+                  visualDensity: VisualDensity.compact,
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  _isCompanionTyping ? 'typing…' : _partnerMood.toLowerCase(),
-                  style: EdenTheme.bodySmall.copyWith(
-                    color: _isCompanionTyping ? EdenTheme.accentPrimary : EdenTheme.textSecondary,
-                  ),
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined, size: 20),
+                  color: EdenTheme.textSecondary.withValues(alpha: 0.6),
+                  onPressed: () => context.push('/settings'),
+                  visualDensity: VisualDensity.compact,
                 ),
               ],
             ),
-          ),
-          // Actions
-          IconButton(
-            icon: const Icon(Icons.bookmark_border_rounded, color: EdenTheme.textSecondary),
-            tooltip: 'Memory Vault',
-            onPressed: () => context.push('/memories'),
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: EdenTheme.textSecondary),
-            tooltip: 'Settings',
-            onPressed: () => context.push('/settings'),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildMessageList() {
+  Widget _buildMessageList(ConversationState conversationState) {
     if (_isInitializing) {
       return const Center(
-        child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation(EdenTheme.accentPrimary)),
+        child: CircularProgressIndicator(
+          strokeWidth: 1.5,
+          valueColor: AlwaysStoppedAnimation(EdenTheme.accentPrimary),
+        ),
       );
     }
 
-    if (_messages.isEmpty) {
+    final messages = conversationState.messages;
+    final isTyping = ref.watch(typingProvider);
+
+    if (messages.isEmpty && !isTyping) {
+      final partnerName = ref.read(partnerStateProvider)?.name ?? 'Eden';
       return Center(
         child: Text(
-          'connection established.\nsay hello to $_partnerName.',
+          'connection established.\nsay hello to ${partnerName.toLowerCase()}.',
           textAlign: TextAlign.center,
-          style: EdenTheme.bodyMedium.copyWith(color: EdenTheme.textSecondary, fontStyle: FontStyle.italic),
+          style: EdenTheme.bodyMedium.copyWith(
+            color: EdenTheme.textSecondary,
+            fontStyle: FontStyle.italic,
+          ),
         ),
       );
     }
@@ -293,82 +548,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     return ListView.builder(
       controller: _scrollController,
       reverse: true,
-      padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 12.0),
-      itemCount: _messages.length + (_isCompanionTyping ? 1 : 0),
+      padding: const EdgeInsets.fromLTRB(16.0, 72.0, 16.0, 16.0),
+      itemCount: messages.length + (isTyping ? 1 : 0),
       itemBuilder: (context, index) {
-        if (_isCompanionTyping && index == 0) {
-          return _buildTypingBubble();
+        if (isTyping && index == 0) {
+          return _buildTypingIndicator();
         }
         
-        final msgIndex = _isCompanionTyping ? index - 1 : index;
-        final msg = _messages[msgIndex];
-        return _buildMessageBubble(msg);
+        final msgIndex = isTyping ? index - 1 : index;
+        final msg = messages[msgIndex];
+        final showTimestamp = _shouldShowTimestamp(messages, msgIndex);
+
+        return MessageBubble(
+          message: msg,
+          showTimestamp: showTimestamp,
+        );
       },
     );
   }
 
-  Widget _buildMessageBubble(Message msg) {
-    final bool isUser = msg.role == 'user';
-    final String formattedTime = DateFormat('jm').format(msg.sentAt);
-
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Column(
-        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          Container(
-            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
-            margin: const EdgeInsets.symmetric(vertical: 4.0),
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-            decoration: BoxDecoration(
-              color: isUser ? EdenTheme.accentPrimary : EdenTheme.bgSurface,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(16),
-                topRight: const Radius.circular(16),
-                bottomLeft: Radius.circular(isUser ? 16 : 4),
-                bottomRight: Radius.circular(isUser ? 4 : 16),
-              ),
-              border: isUser 
-                  ? null 
-                  : Border.all(color: EdenTheme.textSecondary.withValues(alpha: 0.08), width: 0.6),
-            ),
-            child: Text(
-              msg.content,
-              style: EdenTheme.bodyMedium.copyWith(
-                color: isUser ? EdenTheme.bgPrimary : EdenTheme.textPrimary,
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
-            child: Text(
-              formattedTime,
-              style: EdenTheme.labelSmall.copyWith(fontSize: 9),
-            ),
-          ),
-          const SizedBox(height: 6),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTypingBubble() {
-    return Align(
+  Widget _buildTypingIndicator() {
+    return const Align(
       alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4.0),
-        padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 14.0),
-        decoration: BoxDecoration(
-          color: EdenTheme.bgSurface,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(4),
-            bottomRight: Radius.circular(16),
-          ),
-          border: Border.all(color: EdenTheme.textSecondary.withValues(alpha: 0.08), width: 0.6),
+      child: Padding(
+        padding: EdgeInsets.only(left: 16.0, top: 12.0, bottom: 12.0),
+        child: TypingIndicator(
+          dotSize: 6.0,
+          spacing: 4.0,
         ),
-        child: const _TypingDots(),
       ),
     );
   }
@@ -396,111 +603,62 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     );
   }
 
-  Widget _buildInputArea() {
+  Widget _buildInputArea(Partner? partner) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: const BoxDecoration(
-        color: EdenTheme.bgSurface,
-        border: Border(top: BorderSide(color: EdenTheme.bgElevated, width: 0.8)),
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      color: EdenTheme.bgPrimary,
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
             child: Container(
+              constraints: const BoxConstraints(minHeight: 46),
               decoration: BoxDecoration(
-                color: EdenTheme.bgPrimary.withValues(alpha: 0.6),
+                color: EdenTheme.bgElevated.withValues(alpha: 0.5),
                 borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: EdenTheme.textSecondary.withValues(alpha: 0.15)),
+                border: Border.all(
+                  color: EdenTheme.textSecondary.withValues(alpha: 0.1),
+                  width: 1.0,
+                ),
               ),
               child: TextField(
                 controller: _inputController,
                 focusNode: _inputFocusNode,
-                style: EdenTheme.bodyMedium,
+                style: EdenTheme.bodyLarge,
                 cursorColor: EdenTheme.accentPrimary,
                 textCapitalization: TextCapitalization.sentences,
                 maxLines: 4,
                 minLines: 1,
                 decoration: InputDecoration(
-                  hintText: 'Message $_partnerName...',
-                  hintStyle: EdenTheme.bodyMedium.copyWith(color: EdenTheme.textTertiary),
+                  hintText: partner != null ? 'message ${partner.name.toLowerCase()}...' : 'message...',
+                  hintStyle: EdenTheme.bodyLarge.copyWith(color: EdenTheme.textTertiary),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
                   border: InputBorder.none,
                 ),
-                onSubmitted: (_) => _sendMessage(),
               ),
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           GestureDetector(
             onTap: _sendMessage,
             child: Container(
-              width: 44,
-              height: 44,
+              width: 46,
+              height: 46,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 color: EdenTheme.accentPrimary,
               ),
               child: const Center(
-                child: Icon(Icons.send_rounded, color: EdenTheme.bgPrimary, size: 18),
+                child: Icon(
+                  Icons.arrow_upward_rounded,
+                  color: EdenTheme.bgPrimary,
+                  size: 22,
+                ),
               ),
             ),
           ),
         ],
       ),
-    );
-  }
-}
-
-// --- Typing indicator dot animation ---
-class _TypingDots extends StatefulWidget {
-  const _TypingDots();
-
-  @override
-  State<_TypingDots> createState() => _TypingDotsState();
-}
-
-class _TypingDotsState extends State<_TypingDots> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: List.generate(3, (index) {
-        return AnimatedBuilder(
-          animation: _controller,
-          builder: (context, child) {
-            final double step = 1.0 / 3.0;
-            final double value = (_controller.value - (index * step)).clamp(0.0, step) / step;
-            final double bounce = 3.0 * (1.0 - (value - 0.5).abs() * 2.0);
-            return Container(
-              width: 6,
-              height: 6,
-              margin: const EdgeInsets.symmetric(horizontal: 2.0),
-              transform: Matrix4.translationValues(0.0, -bounce, 0.0),
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: EdenTheme.accentPrimary,
-              ),
-            );
-          },
-        );
-      }),
     );
   }
 }

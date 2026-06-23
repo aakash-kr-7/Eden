@@ -120,6 +120,7 @@ class SessionData {
   final int memoriesCount;
   final int daysTogether;
   final DateTime? lastSeen;
+  final List<ProactiveMessage> pendingProactive;
 
   const SessionData({
     required this.partner,
@@ -128,16 +129,24 @@ class SessionData {
     required this.memoriesCount,
     required this.daysTogether,
     this.lastSeen,
+    this.pendingProactive = const [],
   });
 
   factory SessionData.fromJson(Map<String, dynamic> json) {
+    final rawProactive = json['unread_proactive_messages'];
+    List<ProactiveMessage> pending = [];
+    if (rawProactive is List) {
+      pending = rawProactive.map((e) => ProactiveMessage.fromJson(e as Map<String, dynamic>)).toList();
+    }
+    
     return SessionData(
       partner: Partner.fromJson(json['partner'] as Map<String, dynamic>? ?? const {}),
-      lastSummary: json['last_summary'] as String?,
-      unreadProactive: json['unread_proactive'] as int? ?? 0,
-      memoriesCount: json['memories_count'] as int? ?? 0,
+      lastSummary: json['last_conversation_summary'] as String? ?? json['last_summary'] as String?,
+      unreadProactive: pending.isNotEmpty ? pending.length : (json['unread_proactive'] as int? ?? 0),
+      memoriesCount: json['memory_count'] as int? ?? json['memories_count'] as int? ?? 0,
       daysTogether: json['days_together'] as int? ?? 0,
       lastSeen: json['last_seen'] != null ? DateTime.parse(json['last_seen'] as String) : null,
+      pendingProactive: pending,
     );
   }
 }
