@@ -1,5 +1,5 @@
 import logging
-import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -10,104 +10,123 @@ from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
 
 from config import settings
-from memory.store import db
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass(frozen=True)
-class AuthenticatedIdentity:
-    uid: str
-    email: Optional[str]
-    display_name: Optional[str]
+class User:
+    user_id: str
+    email: Optional[str] = None
 
+    @property
+    def uid(self) -> str:
+        """Alias for backwards compatibility with the old AuthenticatedIdentity."""
+        return self.user_id
+
+    @property
+    def display_name(self) -> Optional[str]:
+        """Alias for backwards compatibility with the old AuthenticatedIdentity."""
+        if self.email:
+            return self.email.split("@")[0]
+        return "User"
+
+# Keep the alias AuthenticatedIdentity so other files importing it don't break
+AuthenticatedIdentity = User
+
+# Simple in-memory token cache: token -> (User object, expiry_timestamp)
+_TOKEN_CACHE = {}
 
 def initialize_firebase_auth() -> None:
+    """Initialize Firebase Admin SDK or raise a clear startup error if credentials file doesn't exist."""
     if firebase_admin._apps:
         return
 
-    service_account_path = settings.FIREBASE_SERVICE_ACCOUNT_PATH.strip()
-    app_kwargs = {"options": {"projectId": settings.FIREBASE_PROJECT_ID}}
-
-    if service_account_path:
-        path = Path(service_account_path)
-        if not path.exists():
-            raise RuntimeError(
-                f"Firebase service account file not found at {path}. "
-                "Set FIREBASE_SERVICE_ACCOUNT_PATH to a real mounted credential file."
-            )
-        cred = credentials.Certificate(path)
-        firebase_admin.initialize_app(cred, **app_kwargs)
-        logger.info("Firebase Admin initialized with service account credentials")
-        return
-
-    try:
-        firebase_admin.initialize_app(**app_kwargs)
-        logger.info("Firebase Admin initialized with application default credentials")
-    except Exception as exc:
-        hint = (
-            "Firebase Admin could not initialize without explicit credentials. "
-            "Mount a Firebase service account JSON and set "
-            "FIREBASE_SERVICE_ACCOUNT_PATH, or provide GOOGLE_APPLICATION_CREDENTIALS."
+    cred_path_str = settings.FIREBASE_CREDENTIALS_PATH.strip()
+    if not cred_path_str:
+        raise RuntimeError(
+            "FIREBASE_CREDENTIALS_PATH is empty or not configured. "
+            "Please set FIREBASE_CREDENTIALS_PATH in your environment variables or .env file."
         )
-        if settings.DEBUG or os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-            hint = (
-                "Firebase Admin initialization failed. Provide a valid "
-                "FIREBASE_SERVICE_ACCOUNT_PATH or GOOGLE_APPLICATION_CREDENTIALS."
+
+    path = Path(cred_path_str)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Firebase credentials file not found at '{path}'. "
+            "Please ensure that the path is correct and the file exists."
+        )
+
+    app_kwargs = {"options": {"projectId": settings.FIREBASE_PROJECT_ID}}
+    cred = credentials.Certificate(path)
+    firebase_admin.initialize_app(cred, **app_kwargs)
+    logger.info("Firebase Admin initialized with credentials from: %s", path)
+
+def get_or_create_user(user_id: str, email: Optional[str]) -> None:
+    """Ensure user exists in the database and preference table."""
+    from memory.store import db
+    try:
+        with db.transaction():
+            db.get_or_create_user(
+                user_id=user_id,
+                email=email,
             )
-        raise RuntimeError(hint) from exc
+            db.get_or_create_user_preferences(user_id=user_id)
+    except Exception as db_exc:
+        logger.exception("Failed to get_or_create_user / registration for user_id %s", user_id)
+        raise RuntimeError(f"Database error during user registration: {db_exc}")
 
+def verify_id_token(id_token: str) -> User:
+    """Verify Firebase ID token, cache verified token for 5 minutes, and register user in SQLite."""
+    now = time.time()
+    
+    # Check cache first
+    if id_token in _TOKEN_CACHE:
+        cached_user, cache_expiry = _TOKEN_CACHE[id_token]
+        if now < cache_expiry:
+            return cached_user
+        else:
+            del _TOKEN_CACHE[id_token]
 
-def verify_id_token(id_token: str) -> AuthenticatedIdentity:
+    # Clean cache if it gets too large
+    if len(_TOKEN_CACHE) > 1000:
+        expired_keys = [k for k, (_, exp) in _TOKEN_CACHE.items() if now >= exp]
+        for k in expired_keys:
+            del _TOKEN_CACHE[k]
+
     try:
         decoded = firebase_auth.verify_id_token(id_token, check_revoked=False)
     except Exception as exc:
         logger.warning("Firebase token verification failed: %s", exc)
-        raise HTTPException(status_code=401, detail="Invalid or expired Firebase token") from exc
+        raise HTTPException(
+            status_code=401,
+            detail=f"Invalid or expired Firebase token: {str(exc)}"
+        ) from exc
 
     uid = decoded.get("uid") or decoded.get("user_id") or decoded.get("sub")
     if not uid:
-        raise HTTPException(status_code=401, detail="Firebase token missing uid")
-
-    email = decoded.get("email")
-    display_name = decoded.get("name")
-
-    # Immediate User Creation upon verification / first-time login
-    try:
-        with db.transaction():
-            db.get_or_create_user(
-                user_id=uid,
-                display_name=display_name,
-                email=email,
-            )
-            # Ensure user preferences row exists
-            db.get_or_create_user_preferences(user_id=uid)
-    except Exception as db_exc:
-        logger.exception("Failed immediate user creation / registration for uid %s", uid)
-        try:
-            db.log_system_event(
-                "auth_registration_failed",
-                "error",
-                user_id=uid,
-                payload={"error": str(db_exc), "email": email, "display_name": display_name}
-            )
-        except Exception as log_err:
-            logger.error("Failed to log auth_registration_failed to system_events: %s", log_err)
         raise HTTPException(
-            status_code=500,
-            detail=f"Database synchronization failed during authentication: {str(db_exc)}"
+            status_code=401,
+            detail="Firebase token missing user identity identifier (uid)"
         )
 
-    return AuthenticatedIdentity(
-        uid=uid,
-        email=email,
-        display_name=display_name,
-    )
+    email = decoded.get("email")
 
+    # Upsert user records into db
+    try:
+        get_or_create_user(uid, email)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database synchronization failed during authentication: {str(exc)}"
+        )
+
+    user = User(user_id=uid, email=email)
+    _TOKEN_CACHE[id_token] = (user, now + 300) # Cache for 5 minutes
+    return user
 
 async def get_authenticated_identity(
     authorization: Optional[str] = Header(default=None),
-) -> AuthenticatedIdentity:
+) -> User:
+    """Dependency provider to fetch and verify Bearer token from authorization header."""
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
 

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     email                 TEXT,
     created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_seen             DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_active_at        DATETIME,
 
     name                  TEXT,
     preferred_name        TEXT,
@@ -196,6 +197,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     session_number        INTEGER DEFAULT 1,
     session_status        TEXT DEFAULT 'active',
     message_count         INTEGER DEFAULT 0,
+    is_deleted            INTEGER DEFAULT 0,
     emotional_arc         TEXT,
     topics_discussed      TEXT,
     session_summary       TEXT,
@@ -246,6 +248,27 @@ CREATE TABLE IF NOT EXISTS user_facts (
     updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_outdated           INTEGER DEFAULT 0,
     superseded_by_id      INTEGER REFERENCES user_facts(id)
+);
+
+
+-- =============================================================================
+-- COMPANION FACTS
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS companion_facts (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pair_id               TEXT NOT NULL REFERENCES relationship_pairs(id) ON DELETE CASCADE,
+    companion_id          TEXT NOT NULL REFERENCES companions(id) ON DELETE CASCADE,
+    category              TEXT NOT NULL,
+    fact_key              TEXT NOT NULL,
+    fact_value            TEXT NOT NULL,
+    confidence            REAL DEFAULT 1.0,
+    source_message_id     INTEGER REFERENCES messages(id),
+    source_type           TEXT DEFAULT 'extracted',
+    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_outdated           INTEGER DEFAULT 0,
+    superseded_by_id      INTEGER REFERENCES companion_facts(id)
 );
 
 
@@ -370,6 +393,14 @@ CREATE TABLE IF NOT EXISTS memory_index (
     source_message_ids    TEXT,
     conversation_id       TEXT REFERENCES conversations(id),
     archived              INTEGER DEFAULT 0,
+    memory_type           TEXT,
+    salience              REAL DEFAULT 0.0,
+    emotional_valence     TEXT,
+    tags                  TEXT,
+    decay_factor          REAL DEFAULT 1.0,
+    is_pinned             INTEGER DEFAULT 0,
+    last_recalled_at      DATETIME,
+    recall_count          INTEGER DEFAULT 0,
     UNIQUE(pair_id, chroma_id)
 );
 
@@ -384,8 +415,36 @@ CREATE TABLE IF NOT EXISTS partners (
     archetype_id          TEXT NOT NULL,
     persona_json          TEXT NOT NULL,
     voice_style_json      TEXT NOT NULL,
+    relationship_stage    TEXT,
+    stage_voice_overlay   TEXT,
     created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- =============================================================================
+-- COMPANION LIFE EVENTS
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS companion_life_events (
+    id                    TEXT PRIMARY KEY,
+    pair_id               TEXT REFERENCES relationship_pairs(id) ON DELETE CASCADE,
+    companion_id          TEXT REFERENCES companions(id) ON DELETE CASCADE,
+    event_description     TEXT,
+    event_type            TEXT,
+    occurred_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_resolved           INTEGER DEFAULT 0,
+    context_injected      INTEGER DEFAULT 0
+);
+
+
+CREATE TABLE IF NOT EXISTS relationship_events (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pair_id               TEXT NOT NULL REFERENCES relationship_pairs(id) ON DELETE CASCADE,
+    event_type            TEXT NOT NULL,
+    description           TEXT NOT NULL,
+    confidence            REAL DEFAULT 1.0,
+    created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -463,3 +522,14 @@ CREATE INDEX IF NOT EXISTS idx_proactive_events_pair_status
 
 CREATE INDEX IF NOT EXISTS idx_system_events_kind_created
     ON system_events(kind, created_at DESC);
+
+
+-- =============================================================================
+-- SCHEMA VERSION
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS schema_version (
+  version INTEGER PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO schema_version VALUES (1, datetime('now'));
+

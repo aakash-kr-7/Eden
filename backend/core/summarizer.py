@@ -1,12 +1,104 @@
+import json
 import logging
 from typing import Optional
 
 from config import settings
-from core.llm import generate_reply
+from core.llm import generate_reply, get_llm_core
 from memory.analysis import emotional_direction_from_events, infer_themes
 from memory.store import db
 
 logger = logging.getLogger(__name__)
+
+
+class Summarizer:
+    async def summarize_conversation(
+        self,
+        messages: list[dict],
+        partner_name: str,
+        existing_summary: Optional[str] = None
+    ) -> str:
+        llm_core = get_llm_core()
+        
+        # Format the conversation history
+        formatted_history = "\n".join([
+            f"{'You' if msg.get('role') == 'assistant' else 'User'}: {msg.get('content', '')}"
+            for msg in messages
+        ])
+        
+        system_prompt = (
+            "You are a summarization engine for a relational companion app. "
+            f"Your task is to write a 2-4 sentence summary of what happened in this conversation from the companion '{partner_name}''s perspective.\n"
+            "Guidelines:\n"
+            "- Write in the first-person plural or from the companion's point of view (e.g., 'We talked about...', 'They told me...', 'I felt...').\n"
+            "- Capture emotional dynamics, key topics discussed, and overall vibe.\n"
+            "- Never mention that you are an AI or use robotic, clinical terminology.\n"
+            "- Keep it completely natural and human."
+        )
+        
+        if existing_summary:
+            system_prompt += f"\n- INTEGRATION: Integrate this summary with the existing summary of previous interactions:\n'{existing_summary}'"
+        
+        output_schema = {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "A 2-4 sentence conversation summary written from the partner's perspective."
+                }
+            },
+            "required": ["summary"]
+        }
+        
+        try:
+            res = await llm_core.complete_structured(
+                system_prompt=system_prompt,
+                messages=[{"role": "user", "content": f"Conversation:\n{formatted_history}"}],
+                output_schema=output_schema,
+                temperature=0.3
+            )
+            return res.get("summary", "").strip()
+        except Exception as e:
+            logger.error("Failed to summarize conversation: %s", e)
+            return f"We talked about recent things. (Fallback summary due to: {str(e)})"
+
+    async def extract_emotional_tone(self, messages: list[dict]) -> str:
+        llm_core = get_llm_core()
+        
+        formatted_history = "\n".join([
+            f"{'You' if msg.get('role') == 'assistant' else 'User'}: {msg.get('content', '')}"
+            for msg in messages
+        ])
+        
+        system_prompt = (
+            "You are an emotional analysis engine. Classify the overall emotional tone of the given conversation into exactly one of these labels:\n"
+            "warm | playful | serious | tense | vulnerable | light | intimate\n\n"
+            "Choose the single most dominant tone. Respond only in valid JSON matching the schema."
+        )
+        
+        output_schema = {
+            "type": "object",
+            "properties": {
+                "tone": {
+                    "type": "string",
+                    "enum": ["warm", "playful", "serious", "tense", "vulnerable", "light", "intimate"],
+                    "description": "The dominant emotional tone label."
+                }
+            },
+            "required": ["tone"]
+        }
+        
+        try:
+            res = await llm_core.complete_structured(
+                system_prompt=system_prompt,
+                messages=[{"role": "user", "content": f"Conversation:\n{formatted_history}"}],
+                output_schema=output_schema,
+                temperature=0.1
+            )
+            return res.get("tone", "warm").strip()
+        except Exception as e:
+            logger.error("Failed to extract emotional tone: %s", e)
+            return "warm"
+
 
 MIN_SIGNALS_FOR_SYNTHESIS = 4
 MAX_FACTS = 8

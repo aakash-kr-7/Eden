@@ -1,208 +1,203 @@
 # =============================================================================
-# core/llm.py — Groq LLM Interface
-# =============================================================================
-#
-# PURPOSE:
-#   Single interface for all LLM API calls. Every chat response goes through here.
-#   Handles: Groq API calls, retry logic, rate limit fallback, response cleaning.
-#
-# WHY A DEDICATED FILE:
-#   If you ever switch from Groq to another provider (OpenAI, Anthropic, local Ollama),
-#   you change ONE file. Everything else stays the same. This is the abstraction layer.
-#
-# CURRENT MODEL:
-#   Primary: llama-3.1-70b-versatile (best quality on Groq free tier)
-#   Fallback: llama3-8b-8192 (faster, less creative but still good)
-#   Free tier: ~14,400 tokens/minute. At ~300 tokens/reply, that's 48 messages/min.
-#   For MVP/testing, this is more than enough.
-#
-# RESPONSE CLEANING:
-#   LLMs sometimes add markdown formatting, quotes, or "Nova: " prefixes.
-#   We strip all of that before returning — the response should be RAW TEXT only.
-#
-# USAGE:
-#   from core.llm import generate_reply
-#   reply = await generate_reply(messages=[...], system_prompt="...")
+# core/llm.py — LLM Core Interface (Groq API Bridge)
 # =============================================================================
 
 import asyncio
+import json
 import logging
 import re
-from typing import Optional
+from typing import Optional, Any
 
 import httpx
 
-from config import settings
+from config import Settings, settings
 from memory.store import db
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Main generation function
+# Custom Exceptions
 # ---------------------------------------------------------------------------
 
-async def generate_reply(
-    messages: list[dict],
-    system_prompt: str,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    model: Optional[str] = None,
-) -> str:
-    """
-    Sends a request to Groq and returns the cleaned reply text.
+class LLMError(Exception):
+    """Base exception for all LLM core errors."""
+    pass
 
-    Args:
-        messages: List of {"role": "user"|"assistant", "content": "..."} dicts.
-                  This is the conversation history window (last N turns).
-        system_prompt: The fully assembled system prompt from context_builder.py.
-        temperature: Override default temperature (uses settings value if None).
-        max_tokens: Override default max tokens.
-        model: Override model (uses settings.LLM_MODEL if None).
 
-    Returns:
-        Clean reply string (no markdown, no prefix, just Nova's words).
+class LLMRateLimitError(LLMError):
+    """Raised specifically when Groq API returns a rate limit error (HTTP 429)."""
+    pass
 
-    Raises:
-        LLMError: If both primary and fallback models fail.
-    """
-    # Use configured defaults unless explicitly overridden
-    temp = temperature if temperature is not None else settings.LLM_TEMPERATURE
-    tokens = max_tokens or settings.LLM_MAX_TOKENS
-    primary_model = model or settings.LLM_MODEL
 
-    # Try primary model first, then fallback. Timeout/server stalls are common
-    # enough that chat should degrade to the faster model instead of hanging.
-    try:
-        raw_reply = await _call_groq(
-            model=primary_model,
-            system_prompt=system_prompt,
+class LLMParseError(LLMError):
+    """Raised when structured response parsing or validation fails."""
+    pass
+
+
+# ---------------------------------------------------------------------------
+# LLMCore Class
+# ---------------------------------------------------------------------------
+
+class LLMCore:
+    def __init__(self, config: Settings):
+        self.config = config
+        self.api_key = config.GROQ_API_KEY
+        self.base_url = config.GROQ_BASE_URL or "https://api.groq.com/openai/v1"
+        self.model = config.GROQ_MODEL or "llama-3.1-70b-versatile"
+        self.environment = config.ENVIRONMENT or "development"
+
+    async def complete(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        temperature: float = 0.85,
+        max_tokens: int = 400,
+        response_format: Optional[dict] = None
+    ) -> str:
+        """
+        Sends a request to Groq API with retries on rate limit.
+        Logs token usage to stdout in development.
+        Returns only the text content of the response.
+        Raises LLMError on unrecoverable failure.
+        """
+        if not self.api_key:
+            raise LLMError("GROQ_API_KEY is not configured in settings")
+
+        payload = {
+            "model": self.model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                *messages,
+            ],
+            # Stop sequences: prevent generating user turn continuations
+            "stop": ["User:", "Human:", "\nUser:", "\nHuman:"],
+        }
+
+        if response_format:
+            payload["response_format"] = response_format
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        retries = 3
+        delay = 1.0
+
+        for attempt in range(retries + 1):
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    response = await client.post(
+                        f"{self.base_url}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    )
+
+                if response.status_code == 429:
+                    raise LLMRateLimitError("Groq API returned HTTP 429 Rate Limit Exceeded")
+                if response.status_code == 401:
+                    raise LLMError("Groq API key is invalid (HTTP 401)")
+                if response.status_code >= 400 and response.status_code < 500:
+                    logger.error(f"Groq API client error: HTTP {response.status_code} - {response.text}")
+                    raise LLMError(f"Groq API client error: HTTP {response.status_code} - {response.text}")
+                if response.status_code >= 500:
+                    raise LLMError(f"Groq server error: HTTP {response.status_code}")
+
+                response.raise_for_status()
+                data = response.json()
+
+                # Log token usage to stdout in development
+                if self.environment == "development":
+                    usage = data.get("usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", "?")
+                    completion_tokens = usage.get("completion_tokens", "?")
+                    total_tokens = usage.get("total_tokens", "?")
+                    print(
+                        f"[LLM Token Usage] Prompt: {prompt_tokens} | "
+                        f"Completion: {completion_tokens} | Total: {total_tokens}"
+                    )
+
+                content = data["choices"][0]["message"]["content"]
+                return content
+
+            except LLMRateLimitError as e:
+                if attempt == retries:
+                    raise LLMError(f"Rate limit exceeded after {retries} retries: {e}") from e
+                logger.warning(
+                    "Rate limit hit on attempt %d/%d. Retrying in %.1fs...",
+                    attempt + 1, retries + 1, delay
+                )
+                await asyncio.sleep(delay)
+                delay *= 2.0
+            except httpx.TimeoutException as e:
+                raise LLMError(f"Groq API timed out: {e}") from e
+            except httpx.HTTPStatusError as e:
+                raise LLMError(f"Groq API HTTP error: {e}") from e
+            except Exception as e:
+                if not isinstance(e, LLMError):
+                    raise LLMError(f"Unexpected error calling Groq API: {e}") from e
+                raise e
+
+    async def complete_structured(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        output_schema: dict,  # JSON schema
+        temperature: float = 0.3
+    ) -> dict:
+        """
+        Same as complete() but appends "respond only in valid JSON matching this schema: {output_schema}"
+        Parses and validates the response.
+        Returns the parsed dict.
+        """
+        schema_instruction = f"respond only in valid JSON matching this schema: {json.dumps(output_schema)}"
+        structured_prompt = f"{system_prompt}\n\n{schema_instruction}"
+
+        # We pass json_object response format to enforce JSON mode
+        response_text = await self.complete(
+            system_prompt=structured_prompt,
             messages=messages,
-            temperature=temp,
-            max_tokens=tokens,
-            timeout=24.0,
+            temperature=temperature,
+            max_tokens=1000,
+            response_format={"type": "json_object"}
         )
-    except Exception as primary_error:
-        logger.warning(
-            "Primary LLM model %s failed (%s); falling back to %s",
-            primary_model,
-            primary_error,
-            settings.LLM_FALLBACK_MODEL,
-        )
+
         try:
-            raw_reply = await _call_groq(
-                model=settings.LLM_FALLBACK_MODEL,
-                system_prompt=system_prompt,
-                messages=messages,
-                temperature=temp,
-                max_tokens=tokens,
-                timeout=24.0,
-            )
-        except Exception as e:
-            raise LLMError(f"Both models failed. Primary: {primary_error}; fallback: {e}") from e
+            cleaned_text = response_text.strip()
+            # Clean markdown code fences if model wrapped response in ```json ... ```
+            if cleaned_text.startswith("```"):
+                cleaned_text = cleaned_text.strip("`")
+                if cleaned_text.startswith("json"):
+                    cleaned_text = cleaned_text[4:]
+            cleaned_text = cleaned_text.strip()
 
-    # Clean the response before returning
-    cleaned = _clean_response(raw_reply)
-
-    if not cleaned:
-        logger.warning("LLM returned empty response after cleaning")
-        return "..."    # Neutral fallback — feels more human than an error message
-
-    return cleaned
+            parsed_data = json.loads(cleaned_text)
+            return parsed_data
+        except json.JSONDecodeError as e:
+            raise LLMParseError(f"Failed to parse structured JSON response: {e}. Raw response: {response_text}") from e
 
 
 # ---------------------------------------------------------------------------
-# Groq API call
+# Compatibility Layers and Helpers
 # ---------------------------------------------------------------------------
 
-async def _call_groq(
-    model: str,
-    system_prompt: str,
-    messages: list[dict],
-    temperature: float,
-    max_tokens: int,
-    timeout: float = 30.0,
-) -> str:
-    """
-    Raw Groq API call. Returns the raw content string.
-    Separated from generate_reply() so we can retry with different models.
-    """
-    if not settings.GROQ_API_KEY:
-        raise LLMError("GROQ_API_KEY not set")
+llm_core = None
 
-    # Groq uses OpenAI-compatible format
-    # System prompt goes in the "system" role, separate from messages
-    payload = {
-        "model": model,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            *messages,   # Conversation history appended after system prompt
-        ],
-        # Stop sequences: prevent the model from generating "User:" turn continuations
-        "stop": ["User:", "Human:", "\nUser:", "\nHuman:"],
-    }
+def get_llm_core() -> LLMCore:
+    """Singleton getter for LLMCore."""
+    global llm_core
+    if llm_core is None:
+        llm_core = LLMCore(settings)
+    return llm_core
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        try:
-            response = await client.post(
-                f"{settings.GROQ_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
-
-            # Handle specific error codes
-            if response.status_code == 429:
-                raise RateLimitError("Groq rate limit exceeded")
-            if response.status_code == 401:
-                raise LLMError("Groq API key is invalid")
-            if response.status_code >= 500:
-                raise LLMError(f"Groq server error: {response.status_code}")
-
-            response.raise_for_status()
-
-            data = response.json()
-
-            # Extract the content
-            choice = data["choices"][0]
-            content = choice["message"]["content"]
-
-            # Log token usage for monitoring rate limits
-            usage = data.get("usage", {})
-            logger.debug(
-                f"Groq [{model}]: {usage.get('prompt_tokens', '?')} prompt + "
-                f"{usage.get('completion_tokens', '?')} completion tokens"
-            )
-
-            return content
-
-        except (RateLimitError, LLMError):
-            raise   # Re-raise our custom errors
-        except httpx.TimeoutException:
-            raise LLMError("Groq API timed out (30s)")
-        except Exception as e:
-            raise LLMError(f"Unexpected error calling Groq: {e}") from e
-
-
-# ---------------------------------------------------------------------------
-# Response cleaning
-# ---------------------------------------------------------------------------
 
 def _clean_response(text: str) -> str:
     """
-    Strips artifacts that LLMs sometimes inject into their responses.
-    Nova's response should be pure text — no markdown, no role labels.
-
-    What we strip:
-    - "Nova: " prefix (model sometimes echoes the role label)
-    - Markdown bold/italic (**text**, *text*)
-    - Markdown headers (## Header)
-    - Leading/trailing quotes ("response")
-    - Multiple blank lines compressed to one
+    Strips role labels, markdown formatting, quotes and multiple blank lines.
+    Preserved to keep frontend displays perfectly clean.
     """
     if not text:
         return ""
@@ -220,7 +215,7 @@ def _clean_response(text: str) -> str:
     # Remove markdown headers
     cleaned = re.sub(r'^#{1,6}\s+', '', cleaned, flags=re.MULTILINE)
 
-    # Remove markdown bullet points (shouldn't appear, but just in case)
+    # Remove markdown bullet points
     cleaned = re.sub(r'^\s*[-*•]\s+', '', cleaned, flags=re.MULTILINE)
 
     # Strip surrounding quotes if the entire response is quoted
@@ -246,28 +241,52 @@ def _known_speaker_labels() -> list[str]:
     return sorted(labels, key=len, reverse=True)
 
 
-# ---------------------------------------------------------------------------
-# Custom Exceptions
-# ---------------------------------------------------------------------------
+async def generate_reply(
+    messages: list[dict],
+    system_prompt: str,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    model: Optional[str] = None,
+) -> str:
+    """
+    Compatibility wrapper delegating to get_llm_core().complete().
+    """
+    core = get_llm_core()
+    
+    # Save the original model so we don't bleed states if model is overridden
+    original_model = core.model
+    if model:
+        core.model = model
+    
+    try:
+        temp = temperature if temperature is not None else settings.LLM_TEMPERATURE
+        tokens = max_tokens or settings.LLM_MAX_TOKENS
+        
+        raw_reply = await core.complete(
+            system_prompt=system_prompt,
+            messages=messages,
+            temperature=temp,
+            max_tokens=tokens
+        )
+        
+        cleaned = _clean_response(raw_reply)
+        if not cleaned:
+            return "..."
+        return cleaned
+    except Exception as e:
+        logger.error("generate_reply wrapper failed: %s", e)
+        # Check if it was an LLMError, re-raise it
+        if isinstance(e, LLMError):
+            raise e
+        raise LLMError(str(e)) from e
+    finally:
+        if model:
+            core.model = original_model
 
-class LLMError(Exception):
-    """Raised when the LLM call fails after all retries."""
-    pass
-
-
-class RateLimitError(LLMError):
-    """Raised specifically when Groq returns 429 rate limit."""
-    pass
-
-
-# ---------------------------------------------------------------------------
-# Health check utility
-# ---------------------------------------------------------------------------
 
 async def check_llm_health() -> dict:
     """
-    Quick health check for the LLM connection.
-    Called at startup and by the /health endpoint.
+    Compatibility health check.
     """
     try:
         reply = await generate_reply(

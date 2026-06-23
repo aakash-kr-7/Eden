@@ -1,259 +1,190 @@
-import hashlib
 import logging
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 from typing import Optional
-
-import chromadb
-from chromadb.config import Settings as ChromaSettings
-
-from config import settings
-from memory.store import db
+from core.llm import get_llm_core
+from memory.store import memory_store, db
 
 logger = logging.getLogger(__name__)
 
-_chroma_client: Optional[chromadb.PersistentClient] = None
+class MemoryRetriever:
+    async def retrieve(
+        self,
+        user_id: str,
+        current_message: str,
+        conversation_context: str,
+        limit: int = 12
+    ) -> list[dict]:
+        try:
+            # 1. Fetch all candidate memories for the user
+            candidates = await memory_store.get_all(user_id, limit=200)
+            if not candidates:
+                return []
+
+            # Stage 1: Always-include (pinned memories)
+            pinned = [m for m in candidates if m.get("is_pinned") == 1]
+
+            # Stage 2: Recency boost (memories recalled in last 7 days, recall_count > 0)
+            now = datetime.utcnow()
+            seven_days_ago = now - timedelta(days=7)
+            
+            recently_recalled = []
+            for m in candidates:
+                if m.get("is_pinned") == 1:
+                    continue  # Already in Stage 1
+                
+                last_recalled = m.get("last_recalled_at")
+                recall_count = m.get("recall_count") or 0
+                
+                if last_recalled and recall_count > 0:
+                    try:
+                        recalled_dt = datetime.fromisoformat(str(last_recalled))
+                        if recalled_dt > seven_days_ago:
+                            recently_recalled.append(m)
+                    except ValueError:
+                        pass
+
+            # Stage 3: Topic relevance
+            # Use LLMCore.complete_structured() to extract topics from current_message
+            extracted_topics = []
+            try:
+                llm = get_llm_core()
+                topic_prompt = "Extract a list of distinct, general topic keywords (e.g., family, work, health, hobby) related to the following user message."
+                output_schema = {
+                    "type": "object",
+                    "properties": {
+                        "topics": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    },
+                    "required": ["topics"]
+                }
+                result = await llm.complete_structured(
+                    system_prompt=topic_prompt,
+                    messages=[{"role": "user", "content": current_message}],
+                    output_schema=output_schema,
+                    temperature=0.0
+                )
+                extracted_topics = [t.strip().lower() for t in result.get("topics", [])]
+            except Exception as e:
+                logger.error("Failed to extract topics for retrieval: %s", e)
+
+            # Score candidates not yet included in Stage 1 or 2
+            scored_candidates = []
+            included_ids = {m["chroma_id"] for m in pinned + recently_recalled}
+
+            for m in candidates:
+                if m["chroma_id"] in included_ids:
+                    continue
+
+                salience = float(m.get("salience") or 0.0)
+                decay_factor = float(m.get("decay_factor") or 1.0)
+                
+                # Check for tag matches
+                tag_match = False
+                tags = [t.strip().lower() for t in (m.get("tags") or [])]
+                for tag in tags:
+                    if tag in extracted_topics:
+                        tag_match = True
+                        break
+                
+                tag_match_bonus = 2.0 if tag_match else 1.0
+                score = salience * decay_factor * tag_match_bonus
+                
+                scored_candidates.append((score, m))
+
+            # Sort by score DESC
+            scored_candidates.sort(key=lambda x: x[0], reverse=True)
+            topic_relevant = [item[1] for item in scored_candidates]
+
+            # Stage 4: Fill remaining slots with highest-salience memories not yet included
+            # Create the final prioritized list of selected memories
+            selected = []
+            selected.extend(pinned)
+            
+            for m in recently_recalled:
+                if len(selected) >= limit:
+                    break
+                if m not in selected:
+                    selected.append(m)
+
+            for m in topic_relevant:
+                if len(selected) >= limit:
+                    break
+                if m not in selected:
+                    selected.append(m)
+
+            # If we still have slots left, grab remaining candidates sorted by salience
+            if len(selected) < limit:
+                remaining = [m for m in candidates if m not in selected]
+                remaining.sort(key=lambda x: float(x.get("salience") or 0.0), reverse=True)
+                for m in remaining:
+                    if len(selected) >= limit:
+                        break
+                    selected.append(m)
+
+            # Update recall metadata in the database
+            retrieved_ids = [m["chroma_id"] for m in selected]
+            if retrieved_ids:
+                placeholders = ",".join("?" for _ in retrieved_ids)
+                now_str = datetime.utcnow().isoformat()
+                db.conn.execute(
+                    f"""
+                    UPDATE memory_index 
+                    SET last_recalled_at = ?, recall_count = recall_count + 1 
+                    WHERE chroma_id IN ({placeholders})
+                    """,
+                    (now_str, *retrieved_ids)
+                )
+
+            # Return ordered: pinned first, then by relevance score/salience DESC
+            # To compute sort key: pinned gets 10.0 bonus
+            def sort_key(m: dict) -> float:
+                score = 0.0
+                if m.get("is_pinned") == 1:
+                    score += 10.0
+                salience = float(m.get("salience") or 0.0)
+                decay = float(m.get("decay_factor") or 1.0)
+                score += salience * decay
+                return score
+
+            selected.sort(key=sort_key, reverse=True)
+            return selected
+
+        except Exception as e:
+            logger.error("Failed to retrieve memories: %s", e, exc_info=True)
+            return []
 
 
-def get_chroma_client() -> chromadb.PersistentClient:
-    global _chroma_client
-    if _chroma_client is None:
-        _chroma_client = chromadb.PersistentClient(
-            path=settings.CHROMA_DB_PATH,
-            settings=ChromaSettings(
-                anonymized_telemetry=False,
-                allow_reset=True,
-            ),
-        )
-        logger.info("ChromaDB initialized at %s", settings.CHROMA_DB_PATH)
-    return _chroma_client
-
-
-def get_chroma_collection(pair_id: str, user_id: Optional[str] = None) -> chromadb.Collection:
-    client = get_chroma_client()
-    collection_name = _collection_name_for_pair(pair_id)
-    collection = client.get_or_create_collection(
-        name=collection_name,
-        metadata={"hnsw:space": "cosine"},
-    )
-
-    if user_id:
-        _migrate_legacy_user_collection(user_id=user_id, pair_id=pair_id, target_collection=collection)
-
-    return collection
-
-
-def retrieve_relevant_memories(
+# Compatibility wrapper function for context_builder.py
+async def retrieve_relevant_memories(
     pair_id: str,
     query_text: str,
     user_id: Optional[str] = None,
     n_results: Optional[int] = None,
     min_similarity: Optional[float] = None,
 ) -> list[dict]:
-    n = n_results or settings.MEMORY_RETRIEVAL_COUNT
-    threshold = min_similarity or settings.MEMORY_SIMILARITY_THRESHOLD
-
-    logger.info("ChromaDB Query for semantic retrieval: '%s'", query_text)
-
-    try:
-        collection = get_chroma_collection(pair_id=pair_id, user_id=user_id)
-        count = collection.count()
-        if count == 0:
-            return []
-
-        actual_n = min(n, count)
-        results = collection.query(
-            query_texts=[query_text],
-            n_results=actual_n,
-            include=["documents", "metadatas", "distances"],
-        )
-
-        documents = results["documents"][0] if results.get("documents") else []
-        metadatas = results["metadatas"][0] if results.get("metadatas") else []
-        distances = results["distances"][0] if results.get("distances") else []
-        ids = results["ids"][0] if results.get("ids") else []
-
-        metadata_map = db.get_memory_metadata_map(pair_id, ids)
-        memories = []
-        retrieved_ids = []
-
-        for chroma_id, document, meta, distance in zip(ids, documents, metadatas, distances):
-            similarity = 1.0 - float(distance)
-            if similarity < threshold:
-                continue
-
-            stored_meta = metadata_map.get(chroma_id, {})
-            if int(stored_meta.get("archived") or 0) == 1:
-                continue
-            strength = float(stored_meta.get("strength") or meta.get("strength") or 1.0)
-            emotional_weight = float(
-                stored_meta.get("emotional_weight") or meta.get("emotional_weight") or meta.get("importance") or 0.5
-            )
-            recency = _memory_recency_score(stored_meta)
-
-            memories.append({
-                "id": chroma_id,
-                "title": stored_meta.get("title") or meta.get("title") or _derive_title(document),
-                "content": document,
-                "emotion_tag": stored_meta.get("emotion_tag") or meta.get("emotion_tag") or "",
-                "emotional_weight": emotional_weight,
-                "strength": strength,
-                "recency": recency,
-                "similarity": round(similarity, 3),
-            })
-            retrieved_ids.append(chroma_id)
-
-        def _calculate_rank(item: dict) -> float:
-            is_unresolved = str(item.get("emotion_tag") or "").lower() in {
-                "sad", "anxious", "grief", "anger", "lonely", "overwhelmed"
-            }
-            unresolved_bonus = 0.10 if is_unresolved else 0.0
-            
-            return (
-                item["similarity"] * 0.35
-                + item["emotional_weight"] * 0.30
-                + min(item["strength"], 3.0) / 3.0 * 0.15
-                + item["recency"] * 0.10
-                + unresolved_bonus
-            )
-
-        memories.sort(
-            key=_calculate_rank,
-            reverse=True,
-        )
-
-        db.reinforce_memories(pair_id, retrieved_ids)
-        return memories
-
-    except Exception as exc:
-        logger.error("Memory retrieval failed for pair %s: %s", pair_id, exc, exc_info=True)
+    if not user_id:
         return []
-
-
-def get_memory_count(pair_id: str, user_id: Optional[str] = None) -> int:
-    try:
-        return get_chroma_collection(pair_id=pair_id, user_id=user_id).count()
-    except Exception:
-        return 0
-
-
-def delete_memory(pair_id: str, memory_id: str, user_id: Optional[str] = None) -> bool:
-    try:
-        get_chroma_collection(pair_id=pair_id, user_id=user_id).delete(ids=[memory_id])
-        return True
-    except Exception as exc:
-        logger.error("Failed to delete memory %s: %s", memory_id, exc)
-        return False
-
-
-def update_memory_document(
-    pair_id: str,
-    memory_id: str,
-    *,
-    content: str,
-    title: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> bool:
-    try:
-        collection = get_chroma_collection(pair_id=pair_id, user_id=user_id)
-        metadata = {}
-        if title:
-            metadata["title"] = title
-        collection.update(
-            ids=[memory_id],
-            documents=[content],
-            metadatas=[metadata] if metadata else None,
-        )
-        return True
-    except Exception as exc:
-        logger.error("Failed to update memory %s: %s", memory_id, exc)
-        return False
-
-
-def clear_all_memories(pair_id: str) -> bool:
-    try:
-        client = get_chroma_client()
-        client.delete_collection(_collection_name_for_pair(pair_id))
-        logger.info("Cleared all memories for pair %s", pair_id)
-        return True
-    except Exception as exc:
-        logger.error("Failed to clear memories for pair %s: %s", pair_id, exc)
-        return False
-
-
-def format_memories_for_prompt(memories: list[dict]) -> str:
-    if not memories:
-        return ""
-
-    lines = []
-    for memory in memories:
-        emotion = f" [{memory['emotion_tag']}]" if memory.get("emotion_tag") else ""
-        title = memory.get("title") or "Episode"
-        lines.append(f"- {title}{emotion}: {memory['content']}")
-    return "\n".join(lines)
-
-
-def _derive_title(document: str) -> str:
-    text = (document or "").strip()
-    return text[:80] if text else "Untitled moment"
-
-
-def _collection_name_for_pair(pair_id: str) -> str:
-    digest = hashlib.sha256(pair_id.encode("utf-8")).hexdigest()
-    return f"pair-{digest[:24]}"
-
-
-def _legacy_collection_name_for_user(user_id: str) -> str:
-    return f"user-{user_id.replace('_', '-').lower()[:58]}"
-
-
-def _memory_recency_score(stored_meta: dict) -> float:
-    anchor = stored_meta.get("last_retrieved_at") or stored_meta.get("created_at")
-    if not anchor:
-        return 0.2
-    try:
-        then = datetime.fromisoformat(str(anchor))
-    except ValueError:
-        return 0.2
-
-    age_days = max(0.0, (datetime.utcnow() - then).total_seconds() / 86400.0)
-    if age_days <= 2:
-        return 1.0
-    if age_days <= 7:
-        return 0.82
-    if age_days <= 21:
-        return 0.58
-    if age_days <= 60:
-        return 0.34
-    return 0.18
-
-
-def _migrate_legacy_user_collection(
-    user_id: str,
-    pair_id: str,
-    target_collection: chromadb.Collection,
-) -> None:
-    client = get_chroma_client()
-    legacy_name = _legacy_collection_name_for_user(user_id)
-
-    if legacy_name == target_collection.name:
-        return
-
-    try:
-        legacy = client.get_collection(legacy_name)
-    except Exception:
-        return
-
-    if target_collection.count() > 0:
-        return
-
-    payload = legacy.get(include=["documents", "metadatas"])
-    ids = payload.get("ids") or []
-    if not ids:
-        return
-
-    target_collection.add(
-        ids=ids,
-        documents=payload.get("documents") or [],
-        metadatas=payload.get("metadatas") or [],
+    retriever = MemoryRetriever()
+    limit = n_results or 12
+    # Map context building queries to the retrieve method
+    memories = await retriever.retrieve(
+        user_id=user_id,
+        current_message=query_text,
+        conversation_context="",
+        limit=limit
     )
-    logger.info("Migrated legacy Chroma collection %s -> %s", legacy_name, target_collection.name)
+    # Map memory_index fields to compatibility layout expected by context_builder.py
+    compat_memories = []
+    for m in memories:
+        compat_memories.append({
+            "id": m.get("chroma_id"),
+            "content": m.get("content"),
+            "emotion_tag": m.get("emotion_tag") or m.get("memory_type") or "",
+            "strength": m.get("salience") or 0.5,
+            "importance": m.get("salience") or 0.5,
+            "emotional_weight": m.get("salience") or 0.5,
+        })
+    return compat_memories

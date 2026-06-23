@@ -718,6 +718,7 @@ class Database:
                 "total_sessions INTEGER DEFAULT 0",
                 "onboarding_signals TEXT",
                 "onboarding_completed INTEGER DEFAULT 0",
+                "last_active_at DATETIME",
             ],
             "companions": [
                 "status TEXT DEFAULT 'active'",
@@ -784,6 +785,7 @@ class Database:
                 "topics_discussed TEXT",
                 "session_summary TEXT",
                 "summary TEXT",
+                "is_deleted INTEGER DEFAULT 0",
             ],
             "messages": [
                 "pair_id TEXT",
@@ -847,6 +849,14 @@ class Database:
                 "source_message_ids TEXT",
                 "conversation_id TEXT",
                 "archived INTEGER DEFAULT 0",
+                "memory_type TEXT",
+                "salience REAL DEFAULT 0.0",
+                "emotional_valence TEXT",
+                "tags TEXT",
+                "decay_factor REAL DEFAULT 1.0",
+                "is_pinned INTEGER DEFAULT 0",
+                "last_recalled_at DATETIME",
+                "recall_count INTEGER DEFAULT 0",
             ],
             "companion_life_events": [
                 "pair_id TEXT",
@@ -878,10 +888,73 @@ class Database:
                 "archetype_id TEXT",
                 "persona_json TEXT",
                 "voice_style_json TEXT",
+                "relationship_stage TEXT",
+                "stage_voice_overlay TEXT",
                 "created_at DATETIME",
                 "updated_at DATETIME",
             ],
         }
+
+        # Check and create companion_facts table dynamically if missing
+        if not self._table_exists("companion_facts"):
+            try:
+                self.conn.execute("""
+                    CREATE TABLE companion_facts (
+                        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        pair_id               TEXT NOT NULL REFERENCES relationship_pairs(id) ON DELETE CASCADE,
+                        companion_id          TEXT NOT NULL REFERENCES companions(id) ON DELETE CASCADE,
+                        category              TEXT NOT NULL,
+                        fact_key              TEXT NOT NULL,
+                        fact_value            TEXT NOT NULL,
+                        confidence            REAL DEFAULT 1.0,
+                        source_message_id     INTEGER REFERENCES messages(id),
+                        source_type           TEXT DEFAULT 'extracted',
+                        created_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        is_outdated           INTEGER DEFAULT 0,
+                        superseded_by_id      INTEGER REFERENCES companion_facts(id)
+                    )
+                """)
+                logger.info("Created table companion_facts dynamically")
+            except Exception as e:
+                logger.error("Failed to dynamically create companion_facts table: %s", e)
+
+        # Check and create companion_life_events table dynamically if missing
+        if not self._table_exists("relationship_events"):
+            try:
+                self.conn.execute("""
+                    CREATE TABLE relationship_events (
+                        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        pair_id               TEXT NOT NULL REFERENCES relationship_pairs(id) ON DELETE CASCADE,
+                        event_type            TEXT NOT NULL,
+                        description           TEXT NOT NULL,
+                        confidence            REAL DEFAULT 1.0,
+                        created_at            DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                logger.info("Created table relationship_events dynamically")
+            except Exception as e:
+                logger.error("Failed to dynamically create relationship_events table: %s", e)
+
+        if not self._table_exists("companion_life_events"):
+            try:
+                self.conn.execute("""
+                    CREATE TABLE companion_life_events (
+                        id                    TEXT PRIMARY KEY,
+                        pair_id               TEXT REFERENCES relationship_pairs(id) ON DELETE CASCADE,
+                        companion_id          TEXT REFERENCES companions(id) ON DELETE CASCADE,
+                        event_description     TEXT,
+                        event_type            TEXT,
+                        occurred_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        is_resolved           INTEGER DEFAULT 0,
+                        context_injected      INTEGER DEFAULT 0
+                    )
+                """)
+                logger.info("Created table companion_life_events dynamically")
+            except Exception as e:
+                logger.error("Failed to dynamically create companion_life_events table: %s", e)
 
         # Check and create partners table dynamically if missing
         if not self._table_exists("partners"):
@@ -1071,6 +1144,12 @@ class Database:
     def get_user(self, user_id: str) -> Optional[dict]:
         return self._row_to_dict(
             self.conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        )
+
+    def update_last_active(self, user_id: str):
+        self.conn.execute(
+            "UPDATE users SET last_active_at = ? WHERE id = ?",
+            (_utcnow_iso(), user_id),
         )
 
     def save_partner(
@@ -1989,6 +2068,30 @@ class Database:
             (summary, summary, conversation_id),
         )
 
+    def get_user_conversations(self, user_id: str) -> list[dict]:
+        rows = self.conn.execute(
+            """
+            SELECT c.id, c.started_at, c.last_message_at, c.message_count, 
+                   COALESCE(c.summary, c.session_summary) AS summary,
+                   (SELECT m.emotional_tone 
+                    FROM messages m 
+                    WHERE m.conversation_id = c.id AND m.emotional_tone IS NOT NULL 
+                    ORDER BY m.created_at DESC, m.id DESC 
+                    LIMIT 1) AS emotional_tone
+            FROM conversations c
+            WHERE c.user_id = ? AND c.is_deleted = 0
+            ORDER BY c.last_message_at DESC
+            """,
+            (user_id,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def soft_delete_conversation(self, conversation_id: str):
+        self.conn.execute(
+            "UPDATE conversations SET is_deleted = 1 WHERE id = ?",
+            (conversation_id,)
+        )
+
     def save_conversation_insights(
         self,
         conversation_id: str,
@@ -2176,6 +2279,36 @@ class Database:
             (message_id,),
         ).fetchone()
         return self._normalize_message_row(row) if row else None
+
+    def get_paginated_messages(
+        self,
+        conversation_id: str,
+        limit: int = 50,
+        before_id: Optional[int] = None
+    ) -> list[dict]:
+        if before_id is not None:
+            rows = self.conn.execute(
+                """
+                SELECT *
+                FROM messages
+                WHERE conversation_id = ? AND id < ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (conversation_id, before_id, limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT *
+                FROM messages
+                WHERE conversation_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (conversation_id, limit),
+            ).fetchall()
+        return [self._normalize_message_row(row) for row in reversed(rows)]
 
     def get_latest_message_for_pair(self, pair_id: str) -> Optional[dict]:
         row = self.conn.execute(
@@ -3443,4 +3576,160 @@ class Database:
         return [row["name"] for row in rows if row["name"]]
 
 
+class MemoryStore:
+    def _row_to_dict(self, row) -> dict:
+        d = dict(row)
+        if d.get("tags"):
+            try:
+                d["tags"] = json.loads(d["tags"])
+            except Exception:
+                d["tags"] = []
+        else:
+            d["tags"] = []
+        return d
+
+    async def add(self, user_id: str, memory: dict) -> str:
+        primary = db.get_primary_pair(user_id)
+        if primary:
+            pair_id = primary["id"]
+            companion_id = primary["companion_id"]
+        else:
+            companion_id = settings.DEFAULT_CHARACTER
+            pair_id = f"{user_id}::{companion_id}"
+
+        chroma_id = str(uuid.uuid4())
+        tags_json = json.dumps(memory.get("tags") or [])
+        db.conn.execute(
+            """
+            INSERT INTO memory_index (
+                user_id, pair_id, companion_id, chroma_id, content,
+                memory_type, salience, emotional_valence, tags,
+                decay_factor, is_pinned, created_at, retrieval_count, archived
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 0, ?, 0, 0)
+            """,
+            (
+                user_id,
+                pair_id,
+                companion_id,
+                chroma_id,
+                memory.get("content"),
+                memory.get("memory_type"),
+                memory.get("salience", 0.0),
+                memory.get("emotional_valence"),
+                tags_json,
+                _utcnow_iso(),
+            )
+        )
+        db.conn.execute(
+            """
+            UPDATE relationship_pairs
+            SET memory_count = memory_count + 1
+            WHERE id = ?
+            """,
+            (pair_id,)
+        )
+        return chroma_id
+
+    async def get_all(self, user_id: str, limit: int = 100) -> list[dict]:
+        primary = db.get_primary_pair(user_id)
+        if not primary:
+            return []
+        pair_id = primary["id"]
+        rows = db.conn.execute(
+            """
+            SELECT * FROM memory_index
+            WHERE pair_id = ? AND archived = 0
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (pair_id, limit)
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    async def get_by_type(self, user_id: str, memory_type: str) -> list[dict]:
+        primary = db.get_primary_pair(user_id)
+        if not primary:
+            return []
+        pair_id = primary["id"]
+        rows = db.conn.execute(
+            """
+            SELECT * FROM memory_index
+            WHERE pair_id = ? AND memory_type = ? AND archived = 0
+            ORDER BY created_at DESC
+            """,
+            (pair_id, memory_type)
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    async def get_pinned(self, user_id: str) -> list[dict]:
+        primary = db.get_primary_pair(user_id)
+        if not primary:
+            return []
+        pair_id = primary["id"]
+        rows = db.conn.execute(
+            """
+            SELECT * FROM memory_index
+            WHERE pair_id = ? AND is_pinned = 1 AND archived = 0
+            ORDER BY created_at DESC
+            """,
+            (pair_id,)
+        ).fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    async def update_salience(self, memory_id: str, salience: float):
+        if isinstance(memory_id, int) or (isinstance(memory_id, str) and memory_id.isdigit()):
+            db.conn.execute(
+                "UPDATE memory_index SET salience = ? WHERE id = ?",
+                (salience, int(memory_id))
+            )
+        else:
+            db.conn.execute(
+                "UPDATE memory_index SET salience = ? WHERE chroma_id = ?",
+                (salience, str(memory_id))
+            )
+
+    async def pin(self, memory_id: str):
+        if isinstance(memory_id, int) or (isinstance(memory_id, str) and memory_id.isdigit()):
+            db.conn.execute(
+                "UPDATE memory_index SET is_pinned = 1 WHERE id = ?",
+                (int(memory_id),)
+            )
+        else:
+            db.conn.execute(
+                "UPDATE memory_index SET is_pinned = 1 WHERE chroma_id = ?",
+                (str(memory_id),)
+            )
+
+    async def delete(self, memory_id: str):
+        row = None
+        if isinstance(memory_id, int) or (isinstance(memory_id, str) and memory_id.isdigit()):
+            row = db.conn.execute("SELECT pair_id FROM memory_index WHERE id = ?", (int(memory_id),)).fetchone()
+            db.conn.execute("DELETE FROM memory_index WHERE id = ?", (int(memory_id),))
+        else:
+            row = db.conn.execute("SELECT pair_id FROM memory_index WHERE chroma_id = ?", (str(memory_id),)).fetchone()
+            db.conn.execute("DELETE FROM memory_index WHERE chroma_id = ?", (str(memory_id),))
+        
+        if row and row["pair_id"]:
+            db.conn.execute(
+                """
+                UPDATE relationship_pairs
+                SET memory_count = MAX(0, memory_count - 1)
+                WHERE id = ?
+                """,
+                (row["pair_id"],)
+            )
+
+    async def count(self, user_id: str) -> int:
+        primary = db.get_primary_pair(user_id)
+        if not primary:
+            return 0
+        pair_id = primary["id"]
+        row = db.conn.execute(
+            "SELECT COUNT(*) as cnt FROM memory_index WHERE pair_id = ? AND archived = 0",
+            (pair_id,)
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+
 db = Database()
+memory_store = MemoryStore()

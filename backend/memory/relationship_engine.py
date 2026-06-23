@@ -1,8 +1,18 @@
 import re
-from datetime import datetime
-from typing import Optional
+import json
+import logging
+from datetime import datetime, timedelta
+from typing import Optional, Any
 
-from memory.store import db
+from memory.store import db, memory_store
+from config import settings
+from core.llm import get_llm_core
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Compatibility Functions from original relationship_engine.py
+# ---------------------------------------------------------------------------
 
 DISCLOSURE_PATTERNS = [
     r"\bi feel\b",
@@ -37,6 +47,149 @@ QUESTION_PATTERNS = [
     r"\bwhat do you think\b",
 ]
 
+def _parse_ts(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+def _pattern_hits(text: str, patterns: list[str]) -> int:
+    return sum(1 for pattern in patterns if re.search(pattern, text))
+
+def _recent_vulnerability(emotions: list[dict], patterns: list[dict]) -> bool:
+    strong_emotion = any(
+        float(event.get("intensity") or 0.0) >= 0.65 and float(event.get("valence") or 0.0) <= -0.25
+        for event in emotions
+    )
+    expressive_pattern = any(
+        "open up" in (pattern.get("description") or "").lower()
+        or "vulnerab" in (pattern.get("description") or "").lower()
+        for pattern in patterns
+    )
+    return strong_emotion or expressive_pattern
+
+def _topic_overlap_score(messages: list[dict]) -> float:
+    topic_sets = []
+    for message in messages:
+        topics = [str(topic).strip().lower() for topic in message.get("topics") or [] if str(topic).strip()]
+        if topics:
+            topic_sets.append(set(topics))
+    if len(topic_sets) < 2:
+        return 0.0
+
+    overlap_count = 0
+    comparisons = 0
+    for i in range(1, len(topic_sets)):
+        comparisons += 1
+        if topic_sets[i - 1].intersection(topic_sets[i]):
+            overlap_count += 1
+    return overlap_count / max(1, comparisons)
+
+def _apply_pair_deltas(
+    pair_id: str,
+    closeness_delta: float = 0.0,
+    trust_delta: float = 0.0,
+    openness_delta: float = 0.0,
+    comfort_delta: float = 0.0,
+    rhythm_delta: float = 0.0,
+    topic_familiarity_delta: float = 0.0,
+    stage: Optional[str] = None,
+) -> Optional[dict]:
+    db.conn.execute(
+        """
+        UPDATE relationship_pairs
+        SET closeness_score = MIN(MAX(closeness_score + ?, 0.0), 1.0),
+            trust_score = MIN(MAX(trust_score + ?, 0.0), 1.0),
+            openness_score = MIN(MAX(openness_score + ?, 0.0), 1.0),
+            comfort_score = MIN(MAX(comfort_score + ?, 0.0), 1.0),
+            rhythm_score = MIN(MAX(rhythm_score + ?, 0.0), 1.0),
+            topic_familiarity_score = MIN(MAX(topic_familiarity_score + ?, 0.0), 1.0),
+            current_stage = COALESCE(?, current_stage),
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            closeness_delta,
+            trust_delta,
+            openness_delta,
+            comfort_delta,
+            rhythm_delta,
+            topic_familiarity_delta,
+            stage,
+            datetime.utcnow().isoformat(timespec="milliseconds"),
+            pair_id,
+        ),
+    )
+    return db.get_pair_by_id(pair_id)
+
+def _infer_stage(
+    pair: dict,
+    closeness_shift: float = 0.0,
+    trust_shift: float = 0.0,
+) -> str:
+    closeness = float(pair.get("closeness_score") or 0.0) + closeness_shift
+    trust = float(pair.get("trust_score") or 0.0) + trust_shift
+    sessions = int(pair.get("total_sessions") or 0)
+
+    if sessions <= 1 and closeness < 0.24:
+        return "new"
+    if closeness < 0.34 or trust < 0.3:
+        return "warming"
+    if closeness < 0.56 or trust < 0.5:
+        return "settled"
+    if closeness < 0.76:
+        return "close"
+    return "bonded"
+
+def _user_message_deltas(pair: dict, text: str, topics: list[str]) -> dict[str, float]:
+    lowered = text.lower()
+    length = len(text)
+    word_count = len(text.split())
+    disclosure_hits = _pattern_hits(lowered, DISCLOSURE_PATTERNS)
+    emotion_hits = _pattern_hits(lowered, EMOTION_PATTERNS)
+    question_hits = _pattern_hits(lowered, QUESTION_PATTERNS)
+
+    openness = 0.006 + min(0.045, disclosure_hits * 0.012 + emotion_hits * 0.008)
+    if length > 180:
+        openness += 0.02
+    elif length > 90:
+        openness += 0.01
+
+    trust = 0.004 + min(0.03, disclosure_hits * 0.01 + emotion_hits * 0.006)
+    closeness = 0.004 + min(0.03, openness * 0.55 + (0.012 if word_count > 22 else 0.0))
+    comfort = 0.004 + min(0.02, 0.008 if question_hits else 0.0)
+    rhythm = 0.003 + (0.008 if length < 80 else 0.014 if length < 240 else 0.01)
+    topic_familiarity = 0.005 + min(0.02, len(topics) * 0.004)
+
+    if any(token in lowered for token in ["idk", "i don't know", "whatever", "fine", "nvm"]):
+        comfort -= 0.008
+        trust -= 0.005
+
+    return {
+        "closeness": closeness,
+        "trust": trust,
+        "openness": openness,
+        "comfort": comfort,
+        "rhythm": rhythm,
+        "topic_familiarity": topic_familiarity,
+    }
+
+def _assistant_message_deltas(pair: dict, text: str) -> dict[str, float]:
+    lowered = text.lower()
+    question_hits = _pattern_hits(lowered, QUESTION_PATTERNS)
+    warmth_bonus = 0.01 if any(token in lowered for token in ["hey", "wait", "okay", "right", "honestly"]) else 0.0
+    follow_up_bonus = 0.012 if question_hits else 0.0
+
+    return {
+        "closeness": 0.004 + warmth_bonus,
+        "trust": 0.003 + (0.007 if question_hits else 0.0),
+        "openness": 0.0,
+        "comfort": 0.006 + warmth_bonus,
+        "rhythm": 0.006 + follow_up_bonus,
+        "topic_familiarity": 0.003,
+    }
 
 def on_session_started(pair_id: str) -> Optional[dict]:
     pair = db.get_pair_by_id(pair_id)
@@ -78,7 +231,6 @@ def on_session_started(pair_id: str) -> Optional[dict]:
         stage=_infer_stage(pair, closeness_shift=closeness_delta),
     )
 
-
 def on_message_saved(
     pair_id: str,
     role: str,
@@ -105,7 +257,6 @@ def on_message_saved(
         topic_familiarity_delta=deltas["topic_familiarity"],
         stage=_infer_stage(pair, closeness_shift=deltas["closeness"], trust_shift=deltas["trust"]),
     )
-
 
 def refresh_after_extraction(pair_id: str, conversation_id: Optional[str] = None) -> Optional[dict]:
     pair = db.get_pair_by_id(pair_id)
@@ -138,153 +289,450 @@ def refresh_after_extraction(pair_id: str, conversation_id: Optional[str] = None
     )
 
 
-def _user_message_deltas(pair: dict, text: str, topics: list[str]) -> dict[str, float]:
-    lowered = text.lower()
-    length = len(text)
-    word_count = len(text.split())
-    disclosure_hits = _pattern_hits(lowered, DISCLOSURE_PATTERNS)
-    emotion_hits = _pattern_hits(lowered, EMOTION_PATTERNS)
-    question_hits = _pattern_hits(lowered, QUESTION_PATTERNS)
+# ---------------------------------------------------------------------------
+# Rebuilt RelationshipEngine Implementation
+# ---------------------------------------------------------------------------
 
-    openness = 0.006 + min(0.045, disclosure_hits * 0.012 + emotion_hits * 0.008)
-    if length > 180:
-        openness += 0.02
-    elif length > 90:
-        openness += 0.01
+class RelationshipEngine:
 
-    trust = 0.004 + min(0.03, disclosure_hits * 0.01 + emotion_hits * 0.006)
-    closeness = 0.004 + min(0.03, openness * 0.55 + (0.012 if word_count > 22 else 0.0))
-    comfort = 0.004 + min(0.02, 0.008 if question_hits else 0.0)
-    rhythm = 0.003 + (0.008 if length < 80 else 0.014 if length < 240 else 0.01)
-    topic_familiarity = 0.005 + min(0.02, len(topics) * 0.004)
+    async def process_conversation_end(self, user_id: str, conversation_id: str):
+        try:
+            primary = db.get_primary_pair(user_id)
+            if not primary:
+                logger.warning("No primary relationship pair found for user %s", user_id)
+                return
+            pair_id = primary["id"]
+            companion_id = primary["companion_id"]
 
-    if any(token in lowered for token in ["idk", "i don't know", "whatever", "fine", "nvm"]):
-        comfort -= 0.008
-        trust -= 0.005
+            # Fetch conversation messages in chronological order
+            messages = db.get_recent_messages(user_id=user_id, conversation_id=conversation_id, limit=200)
+            if not messages:
+                logger.warning("No messages found in conversation %s", conversation_id)
+                return
+            messages.reverse()
 
-    return {
-        "closeness": closeness,
-        "trust": trust,
-        "openness": openness,
-        "comfort": comfort,
-        "rhythm": rhythm,
-        "topic_familiarity": topic_familiarity,
-    }
+            conversation_text = ""
+            for msg in messages:
+                role_label = "User" if msg.get("role") == "user" else "Companion"
+                conversation_text += f"{role_label}: {msg.get('content', '')}\n"
 
+            # Fetch companion/partner name
+            partner = db.get_partner(user_id) or {}
+            partner_name = partner.get("name") or "Companion"
 
-def _assistant_message_deltas(pair: dict, text: str) -> dict[str, float]:
-    lowered = text.lower()
-    question_hits = _pattern_hits(lowered, QUESTION_PATTERNS)
-    warmth_bonus = 0.01 if any(token in lowered for token in ["hey", "wait", "okay", "right", "honestly"]) else 0.0
-    follow_up_bonus = 0.012 if question_hits else 0.0
+            # 1. Run memory extractor on conversation messages
+            from memory.extractor import MemoryExtractor
+            existing_memories = await memory_store.get_all(user_id, limit=100)
+            extractor = MemoryExtractor()
+            extracted_memories = await extractor.extract(
+                messages=messages,
+                existing_memories=existing_memories,
+                partner_name=partner_name
+            )
 
-    return {
-        "closeness": 0.004 + warmth_bonus,
-        "trust": 0.003 + (0.007 if question_hits else 0.0),
-        "openness": 0.0,
-        "comfort": 0.006 + warmth_bonus,
-        "rhythm": 0.006 + follow_up_bonus,
-        "topic_familiarity": 0.003,
-    }
+            # 2. Save extracted memories to memory store
+            saved_memory_ids = []
+            for m in extracted_memories:
+                chroma_id = await memory_store.add(user_id, m)
+                saved_memory_ids.append(chroma_id)
 
+            # 3. Detect relationship events
+            event_rows = db.conn.execute(
+                "SELECT event_type, description FROM relationship_events WHERE pair_id = ? ORDER BY created_at DESC LIMIT 50",
+                (pair_id,)
+            ).fetchall()
+            existing_events = [dict(r) for r in event_rows]
 
-def _apply_pair_deltas(
-    pair_id: str,
-    closeness_delta: float = 0.0,
-    trust_delta: float = 0.0,
-    openness_delta: float = 0.0,
-    comfort_delta: float = 0.0,
-    rhythm_delta: float = 0.0,
-    topic_familiarity_delta: float = 0.0,
-    stage: Optional[str] = None,
-) -> Optional[dict]:
-    db.conn.execute(
-        """
-        UPDATE relationship_pairs
-        SET closeness_score = MIN(MAX(closeness_score + ?, 0.0), 1.0),
-            trust_score = MIN(MAX(trust_score + ?, 0.0), 1.0),
-            openness_score = MIN(MAX(openness_score + ?, 0.0), 1.0),
-            comfort_score = MIN(MAX(comfort_score + ?, 0.0), 1.0),
-            rhythm_score = MIN(MAX(rhythm_score + ?, 0.0), 1.0),
-            topic_familiarity_score = MIN(MAX(topic_familiarity_score + ?, 0.0), 1.0),
-            current_stage = COALESCE(?, current_stage),
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (
-            closeness_delta,
-            trust_delta,
-            openness_delta,
-            comfort_delta,
-            rhythm_delta,
-            topic_familiarity_delta,
-            stage,
-            datetime.utcnow().isoformat(timespec="milliseconds"),
-            pair_id,
-        ),
-    )
-    return db.get_pair_by_id(pair_id)
+            from memory.analysis import MemoryAnalysis
+            analysis = MemoryAnalysis()
+            detected_event = await analysis.detect_relationship_event(messages, existing_events)
 
+            # 4. If event detected, save to relationship_events table and update related memory
+            if detected_event:
+                db.conn.execute(
+                    """
+                    INSERT INTO relationship_events (user_id, pair_id, event_type, description, confidence)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        pair_id,
+                        detected_event["event_type"],
+                        detected_event["description"],
+                        detected_event.get("confidence", 1.0)
+                    )
+                )
+                if saved_memory_ids:
+                    # Update related memory to high salience (at least 0.9)
+                    await memory_store.update_salience(saved_memory_ids[0], 0.95)
 
-def _infer_stage(
-    pair: dict,
-    closeness_shift: float = 0.0,
-    trust_shift: float = 0.0,
-) -> str:
-    closeness = float(pair.get("closeness_score") or 0.0) + closeness_shift
-    trust = float(pair.get("trust_score") or 0.0) + trust_shift
-    sessions = int(pair.get("total_sessions") or 0)
+            # 5. Evaluate relationship stage advancement
+            current_stage = primary.get("current_stage") or "new"
+            new_stage = await analysis.compute_relationship_stage(user_id, current_stage)
 
-    if sessions <= 1 and closeness < 0.24:
-        return "new"
-    if closeness < 0.34 or trust < 0.3:
-        return "warming"
-    if closeness < 0.56 or trust < 0.5:
-        return "settled"
-    if closeness < 0.76:
-        return "close"
-    return "bonded"
+            # 6. If stage advanced, update stage columns and create a milestone event
+            if new_stage:
+                db.conn.execute(
+                    "UPDATE relationship_pairs SET current_stage = ?, updated_at = ? WHERE id = ?",
+                    (new_stage, datetime.utcnow().isoformat(), pair_id)
+                )
+                db.conn.execute(
+                    "UPDATE partners SET relationship_stage = ?, updated_at = ? WHERE user_id = ?",
+                    (new_stage, datetime.utcnow().isoformat(), user_id)
+                )
+                db.conn.execute(
+                    """
+                    INSERT INTO relationship_events (user_id, pair_id, event_type, description, confidence)
+                    VALUES (?, ?, 'milestone', ?, 1.0)
+                    """,
+                    (
+                        user_id,
+                        pair_id,
+                        f"Relationship advanced to the stage: {new_stage}."
+                    )
+                )
+                await self.update_partner_voice(user_id, new_stage)
 
+            # 7. Update partner's inside_jokes if a new joke was detected
+            jokes_rows = db.conn.execute(
+                "SELECT fact_value FROM user_facts WHERE pair_id = ? AND category = 'jokes' AND is_outdated = 0",
+                (pair_id,)
+            ).fetchall()
+            existing_jokes = [row["fact_value"] for row in jokes_rows]
+            
+            new_joke = await self.detect_inside_joke(messages, existing_jokes)
+            if new_joke:
+                joke_count_row = db.conn.execute(
+                    "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = 'jokes'",
+                    (pair_id,)
+                ).fetchone()
+                joke_idx = joke_count_row["count"] + 1 if joke_count_row else 1
+                
+                db.conn.execute(
+                    """
+                    INSERT INTO user_facts (
+                        user_id, pair_id, companion_id, category, fact_key, fact_value, confidence, source_type
+                    ) VALUES (?, ?, ?, 'jokes', ?, ?, 1.0, 'relationship_engine')
+                    """,
+                    (
+                        user_id,
+                        pair_id,
+                        companion_id,
+                        f"inside_joke_{joke_idx}",
+                        new_joke
+                    )
+                )
 
-def _topic_overlap_score(messages: list[dict]) -> float:
-    topic_sets = []
-    for message in messages:
-        topics = [str(topic).strip().lower() for topic in message.get("topics") or [] if str(topic).strip()]
-        if topics:
-            topic_sets.append(set(topics))
-    if len(topic_sets) < 2:
-        return 0.0
+            # 8. Update partner's shared_rituals if a recurring pattern is detected (last 5 sessions)
+            conv_rows = db.conn.execute(
+                """
+                SELECT session_summary, summary FROM conversations
+                WHERE pair_id = ? AND session_status = 'ended' AND is_deleted = 0
+                ORDER BY started_at DESC
+                LIMIT 5
+                """,
+                (pair_id,)
+            ).fetchall()
+            recent_convs = []
+            for r in conv_rows:
+                sum_text = r["session_summary"] or r["summary"] or ""
+                if sum_text:
+                    recent_convs.append({"summary": sum_text})
+            
+            if len(recent_convs) >= 2:
+                new_ritual = await self.detect_shared_ritual(recent_convs)
+                if new_ritual:
+                    ritual_count_row = db.conn.execute(
+                        "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = 'rituals'",
+                        (pair_id,)
+                    ).fetchone()
+                    ritual_idx = ritual_count_row["count"] + 1 if ritual_count_row else 1
+                    
+                    db.conn.execute(
+                        """
+                        INSERT INTO user_facts (
+                            user_id, pair_id, companion_id, category, fact_key, fact_value, confidence, source_type
+                        ) VALUES (?, ?, ?, 'rituals', ?, ?, 1.0, 'relationship_engine')
+                        """,
+                        (
+                            user_id,
+                            pair_id,
+                            companion_id,
+                            f"shared_ritual_{ritual_idx}",
+                            new_ritual
+                        )
+                    )
 
-    overlap_count = 0
-    comparisons = 0
-    for i in range(1, len(topic_sets)):
-        comparisons += 1
-        if topic_sets[i - 1].intersection(topic_sets[i]):
-            overlap_count += 1
-    return overlap_count / max(1, comparisons)
+            # 9. Run memory consolidation if user has 50+ memories and 24h has passed
+            total_memories = await memory_store.count(user_id)
+            if total_memories >= 50:
+                last_event = db.conn.execute(
+                    """
+                    SELECT created_at FROM system_events
+                    WHERE user_id = ? AND kind = 'memory_consolidation'
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (user_id,)
+                ).fetchone()
+                
+                run_consolidation = True
+                if last_event:
+                    try:
+                        last_dt = datetime.fromisoformat(str(last_event["created_at"]))
+                        if datetime.utcnow() - last_dt < timedelta(hours=24):
+                            run_consolidation = False
+                    except ValueError:
+                        pass
+                
+                if run_consolidation:
+                    from memory.consolidator import MemoryConsolidator
+                    consolidator = MemoryConsolidator()
+                    await consolidator.consolidate(user_id)
+                    db.conn.execute(
+                        """
+                        INSERT INTO system_events (kind, severity, user_id, pair_id, payload_json)
+                        VALUES ('memory_consolidation', 'info', ?, ?, ?)
+                        """,
+                        (user_id, pair_id, json.dumps({"memories_count": total_memories}))
+                    )
 
+            # 10. Generate post-session summary and save to conversation record
+            try:
+                llm = get_llm_core()
+                summary_prompt = "Generate a concise, single-sentence summary of the main topics and emotional tone of this conversation."
+                summary_text = await llm.complete(
+                    system_prompt=summary_prompt,
+                    messages=[{"role": "user", "content": conversation_text}],
+                    temperature=0.3,
+                    max_tokens=150
+                )
+                summary_text = summary_text.strip()
+                db.conn.execute(
+                    """
+                    UPDATE conversations
+                    SET session_summary = ?, summary = ?, ended_at = ?
+                    WHERE id = ?
+                    """,
+                    (summary_text, summary_text, datetime.utcnow().isoformat(), conversation_id)
+                )
+            except Exception as e:
+                logger.error("Failed to generate and save post-session summary: %s", e)
 
-def _recent_vulnerability(emotions: list[dict], patterns: list[dict]) -> bool:
-    strong_emotion = any(
-        float(event.get("intensity") or 0.0) >= 0.65 and float(event.get("valence") or 0.0) <= -0.25
-        for event in emotions
-    )
-    expressive_pattern = any(
-        "open up" in (pattern.get("description") or "").lower()
-        or "vulnerab" in (pattern.get("description") or "").lower()
-        for pattern in patterns
-    )
-    return strong_emotion or expressive_pattern
+        except Exception as e:
+            logger.error("RelationshipEngine failed process_conversation_end: %s", e, exc_info=True)
 
+    async def detect_inside_joke(
+        self,
+        messages: list[dict],
+        existing_jokes: list[str]
+    ) -> str | None:
+        if not messages:
+            return None
+            
+        conversation_text = ""
+        for msg in messages:
+            role_label = "User" if msg.get("role") == "user" else "Companion"
+            conversation_text += f"{role_label}: {msg.get('content', '')}\n"
 
-def _pattern_hits(text: str, patterns: list[str]) -> int:
-    return sum(1 for pattern in patterns if re.search(pattern, text))
+        existing_text = ""
+        if existing_jokes:
+            existing_text = "\nPreviously detected inside jokes:\n" + "\n".join([f"- {j}" for j in existing_jokes])
 
+        system_prompt = (
+            "You are a relationship analyst.\n"
+            "Identify if a new unique inside joke, recurring shared joke, or playful nickname arose in this conversation.\n"
+            "If yes, return a brief description of the joke (e.g. 'the coffee spill debate' or 'calling the dog a wizard').\n"
+            "Do not return general topics or standard facts. Skip any joke that is already known."
+        )
 
-def _parse_ts(value: Optional[str]) -> Optional[datetime]:
-    if not value:
+        output_schema = {
+            "type": "object",
+            "properties": {
+                "joke_detected": {"type": "boolean"},
+                "joke_description": {
+                    "type": "string",
+                    "description": "Short description of the new inside joke/reference, or empty string if not found."
+                }
+            },
+            "required": ["joke_detected", "joke_description"]
+        }
+
+        try:
+            llm = get_llm_core()
+            result = await llm.complete_structured(
+                system_prompt=system_prompt,
+                messages=[{"role": "user", "content": f"Conversation:\n{conversation_text}\n{existing_text}"}],
+                output_schema=output_schema,
+                temperature=0.2
+            )
+            if result.get("joke_detected") and result.get("joke_description"):
+                return result["joke_description"].strip()
+        except Exception as e:
+            logger.error("Error detecting inside joke: %s", e)
         return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
+
+    async def detect_shared_ritual(
+        self,
+        recent_conversations: list[dict]
+    ) -> str | None:
+        if len(recent_conversations) < 2:
+            return None
+
+        summaries_text = ""
+        for idx, c in enumerate(recent_conversations):
+            summaries_text += f"Session {idx+1}: {c.get('summary') or c.get('session_summary') or ''}\n"
+
+        system_prompt = (
+            "You are a relationship analyst.\n"
+            "Analyze the conversation summaries to identify a recurring shared ritual or behavioral pattern that occurred in 2+ sessions.\n"
+            "A shared ritual is something the user and companion consistently do, talk about, or checking-in on (e.g., 'sharing morning tea updates', 'always checking on their sleep deficit')."
+        )
+
+        output_schema = {
+            "type": "object",
+            "properties": {
+                "ritual_detected": {"type": "boolean"},
+                "ritual_description": {
+                    "type": "string",
+                    "description": "Brief description of the ritual pattern detected, or empty string."
+                }
+            },
+            "required": ["ritual_detected", "ritual_description"]
+        }
+
+        try:
+            llm = get_llm_core()
+            result = await llm.complete_structured(
+                system_prompt=system_prompt,
+                messages=[{"role": "user", "content": f"Summaries:\n{summaries_text}"}],
+                output_schema=output_schema,
+                temperature=0.2
+            )
+            if result.get("ritual_detected") and result.get("ritual_description"):
+                return result["ritual_description"].strip()
+        except Exception as e:
+            logger.error("Error detecting shared ritual: %s", e)
         return None
+
+    async def update_partner_voice(
+        self,
+        user_id: str,
+        relationship_stage: str
+    ):
+        overlays = {
+            "new": {
+                "tone": "slightly formal, exploratory, curious",
+                "rules": ["Keep a respectful distance", "Be curious and polite"]
+            },
+            "familiar": {
+                "tone": "comfortable, more direct, references shared history",
+                "rules": ["Speak casually", "Note prior details they shared"]
+            },
+            "close": {
+                "tone": "uses nicknames, callbacks, more vulnerable",
+                "rules": ["Feel relaxed and secure", "Use light nicknames and teasing"]
+            },
+            "intimate": {
+                "tone": "deeply casual, finishes thoughts, references things from months ago",
+                "rules": ["Share spontaneous or weird thoughts without filter", "Deep vulnerability"]
+            },
+            "bonded": {
+                "tone": "deeply casual, finishes thoughts, references things from months ago",
+                "rules": ["Share spontaneous or weird thoughts without filter", "Deep vulnerability"]
+            }
+        }
+        overlay = overlays.get(relationship_stage.lower(), overlays["new"])
+        db.conn.execute(
+            "UPDATE partners SET stage_voice_overlay = ?, updated_at = ? WHERE user_id = ?",
+            (json.dumps(overlay), datetime.utcnow().isoformat(), user_id)
+        )
+        logger.info("Updated stage voice overlay for user %s to stage %s", user_id, relationship_stage)
+
+    async def get_relationship_summary(self, user_id: str) -> dict:
+        primary = db.get_primary_pair(user_id)
+        if not primary:
+            return {}
+        pair_id = primary["id"]
+        stage = primary.get("current_stage") or "new"
+
+        # Days together calculation
+        introduced_str = primary.get("introduced_at") or primary.get("created_at")
+        days_together = 1
+        if introduced_str:
+            try:
+                intro_dt = datetime.fromisoformat(str(introduced_str).split(".")[0])
+                days_together = max(1, (datetime.utcnow() - intro_dt).days)
+            except Exception:
+                pass
+
+        # Total conversations
+        conv_row = db.conn.execute(
+            "SELECT COUNT(*) as count FROM conversations WHERE pair_id = ? AND is_deleted = 0",
+            (pair_id,)
+        ).fetchone()
+        total_conversations = conv_row["count"] if conv_row else 0
+
+        # Total memories
+        total_memories = await memory_store.count(user_id)
+
+        # Memory breakdown by type
+        breakdown_rows = db.conn.execute(
+            "SELECT memory_type, COUNT(*) as count FROM memory_index WHERE pair_id = ? AND archived = 0 GROUP BY memory_type",
+            (pair_id,)
+        ).fetchall()
+        memory_breakdown = {row["memory_type"]: row["count"] for row in breakdown_rows if row["memory_type"]}
+
+        # Jokes count
+        joke_row = db.conn.execute(
+            "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = 'jokes' AND is_outdated = 0",
+            (pair_id,)
+        ).fetchone()
+        inside_jokes_count = joke_row["count"] if joke_row else 0
+
+        # Rituals count
+        ritual_row = db.conn.execute(
+            "SELECT COUNT(*) as count FROM user_facts WHERE pair_id = ? AND category = 'rituals' AND is_outdated = 0",
+            (pair_id,)
+        ).fetchone()
+        shared_rituals_count = ritual_row["count"] if ritual_row else 0
+
+        # Last 5 relationship events
+        event_rows = db.conn.execute(
+            "SELECT event_type, description, created_at FROM relationship_events WHERE pair_id = ? ORDER BY created_at DESC LIMIT 5",
+            (pair_id,)
+        ).fetchall()
+        relationship_events = [dict(r) for r in event_rows]
+
+        # Emotional trajectory (last 10 messages/events valence trend)
+        emotions_rows = db.conn.execute(
+            "SELECT valence FROM emotional_events WHERE pair_id = ? ORDER BY created_at DESC LIMIT 15",
+            (pair_id,)
+        ).fetchall()
+        
+        valences = [float(row["valence"] or 0.0) for row in emotions_rows]
+        if not valences or len(valences) < 4:
+            emotional_trajectory = "stable"
+        else:
+            valences.reverse()
+            mid = len(valences) // 2
+            first_half = sum(valences[:mid]) / mid
+            second_half = sum(valences[mid:]) / (len(valences) - mid)
+            diff = second_half - first_half
+            if diff > 0.15:
+                emotional_trajectory = "deepening"
+            elif diff < -0.15:
+                emotional_trajectory = "distant"
+            else:
+                emotional_trajectory = "stable"
+
+        return {
+            "stage": stage,
+            "days_together": days_together,
+            "total_conversations": total_conversations,
+            "total_memories": total_memories,
+            "memory_breakdown": memory_breakdown,
+            "inside_jokes_count": inside_jokes_count,
+            "shared_rituals_count": shared_rituals_count,
+            "relationship_events": relationship_events,
+            "emotional_trajectory": emotional_trajectory
+        }
