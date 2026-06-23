@@ -66,3 +66,4 @@ backend/verify_life_simulator.py
 backend/verify_memory_rebuild.py
 backend/verify_relationship_profile.py
 backend/verify_session_bootstrap.py
+backend/verify_onboarding.py

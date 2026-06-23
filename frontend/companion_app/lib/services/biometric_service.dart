@@ -8,8 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class BiometricService {
   static final LocalAuthentication _auth = LocalAuthentication();
-  static const String _pinKey = 'sol_vault_pin_hash';
-  static const String _enabledKey = 'sol_vault_enabled';
+  static const String _pinKey = 'eden_vault_pin_hash';
+  static const String _enabledKey = 'eden_vault_enabled';
 
   /// Check if the device hardware supports biometrics and is configured.
   static Future<bool> canAuthenticate() async {
@@ -90,7 +90,7 @@ class BiometricService {
   /// Salted custom cryptographic digest to store the PIN securely.
   static String _hashPin(String pin) {
     // Unique salt combined with PIN
-    final String salted = 'sol_vault_salt_#2026!_${pin}_presence';
+    final String salted = 'eden_vault_salt_#2026!_${pin}_presence';
     final List<int> bytes = utf8.encode(salted);
 
     // Secure folding hash algorithm

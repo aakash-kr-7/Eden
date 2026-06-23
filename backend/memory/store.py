@@ -905,7 +905,30 @@ class Database:
                 "created_at DATETIME",
                 "updated_at DATETIME",
             ],
+            "onboarding_sessions": [
+                "user_id TEXT PRIMARY KEY",
+                "current_step INTEGER DEFAULT 0",
+                "responses TEXT DEFAULT '{}'",
+                "started_at TEXT",
+                "completed_at TEXT",
+            ],
         }
+
+        # Check and create onboarding_sessions table dynamically if missing
+        if not self._table_exists("onboarding_sessions"):
+            try:
+                self.conn.execute("""
+                    CREATE TABLE onboarding_sessions (
+                        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                        current_step INTEGER DEFAULT 0,
+                        responses TEXT DEFAULT '{}',
+                        started_at TEXT NOT NULL,
+                        completed_at TEXT
+                    )
+                """)
+                logger.info("Created table onboarding_sessions dynamically")
+            except Exception as e:
+                logger.error("Failed to dynamically create onboarding_sessions table: %s", e)
 
         # Check and create life_state table dynamically if missing
         if not self._table_exists("life_state"):
@@ -1172,6 +1195,42 @@ class Database:
             WHERE id = ?
             """,
             (preferred_name, preferred_name, display_name, signals_json, onboarding_completed, user_id),
+        )
+
+    def get_onboarding_session(self, user_id: str) -> Optional[dict]:
+        row = self.conn.execute(
+            "SELECT * FROM onboarding_sessions WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if not row:
+            return None
+        res = dict(row)
+        res["responses"] = json.loads(res["responses"] or "{}")
+        return res
+
+    def create_onboarding_session(self, user_id: str):
+        now = _utcnow_iso()
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO onboarding_sessions (user_id, current_step, responses, started_at)
+            VALUES (?, 0, '{}', ?)
+            """,
+            (user_id, now),
+        )
+
+    def update_onboarding_session(self, user_id: str, current_step: int, responses: dict):
+        self.conn.execute(
+            """
+            UPDATE onboarding_sessions
+            SET current_step = ?,
+                responses = ?
+            WHERE user_id = ?
+            """,
+            (current_step, json.dumps(responses), user_id),
+        )
+
+    def delete_onboarding_session(self, user_id: str):
+        self.conn.execute(
+            "DELETE FROM onboarding_sessions WHERE user_id = ?", (user_id,)
         )
 
     def get_user(self, user_id: str) -> Optional[dict]:

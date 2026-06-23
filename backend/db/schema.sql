@@ -132,6 +132,18 @@ CREATE TABLE IF NOT EXISTS onboarding_responses (
 
 
 -- =============================================================================
+-- ONBOARDING SESSIONS
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS onboarding_sessions (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    current_step INTEGER DEFAULT 0,
+    responses TEXT DEFAULT '{}',
+    started_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+
+-- =============================================================================
 -- DEVICE REGISTRATIONS
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS device_registrations (
