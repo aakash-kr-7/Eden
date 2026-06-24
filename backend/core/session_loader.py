@@ -1,95 +1,208 @@
+# ═══════════════════════════════════════════════════════════════════
+# FILE: session_loader.py
+# PURPOSE: Assembles full session bootstrap payload for Flutter app open.
+# CONTEXT: Called by GET /api/chat/session on every app open.
+# ═══════════════════════════════════════════════════════════════════
+
 import asyncio
 import logging
+import sqlite3
+import time
 from datetime import datetime, timezone
-db = None
-get_partner_instance = None
-resolve_or_assign_primary_pair = None
-pull_pending_events = None
-get_memory_count = None
+from personality.registry import get_partner_instance, resolve_or_assign_primary_pair
 
 logger = logging.getLogger(__name__)
 
-
 class SessionLoader:
-    async def load_session(self, user_id: str) -> dict:
+    async def load(self, db: sqlite3.Connection, user_id: str) -> dict:
         """
-        Loads everything the frontend needs on app open in parallel.
+        Runs all queries in parallel (asyncio.gather).
+        Returns complete session payload.
+        Updates users.last_active_at.
         """
-        # Helper to run synchronous DB lookups in parallel
-        def _get_user_and_pair():
-            user = db.get_user(user_id)
-            pair = db.get_primary_pair(user_id)
+        # Gather user, pair, partner, and life_state in parallel
+        def get_user_sync():
+            row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+        def get_pair_sync():
+            # Ensure primary pair is resolved
+            pair = db.execute("SELECT * FROM relationship_pairs WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
             if not pair:
-                pair = resolve_or_assign_primary_pair(user_id)
-            return user, pair
+                # resolve_or_assign_primary_pair is synchronous in db terms, but performs commits. Let's call it.
+                resolve_or_assign_primary_pair(user_id)
+                pair = db.execute("SELECT * FROM relationship_pairs WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+            return dict(pair) if pair else None
 
-        # Gather user, pair, and unread events in parallel
-        user_pair_task = asyncio.to_thread(_get_user_and_pair)
-        unread_task = pull_pending_events(user_id)
+        def get_partner_sync():
+            row = db.execute("SELECT * FROM partners WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+            return dict(row) if row else None
 
-        (user, pair), unread_messages = await asyncio.gather(
-            user_pair_task, unread_task
+        def get_life_state_sync():
+            row = db.execute("SELECT * FROM life_state WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+        user, pair, partner, life_state = await asyncio.gather(
+            asyncio.to_thread(get_user_sync),
+            asyncio.to_thread(get_pair_sync),
+            asyncio.to_thread(get_partner_sync),
+            asyncio.to_thread(get_life_state_sync)
         )
 
-        pair_id = pair["id"]
+        if not user:
+            raise ValueError(f"User {user_id} not found")
 
-        # Fetch partner details
-        def _get_partner_details():
-            summaries = db.get_recent_conversation_summaries(pair_id, limit=1)
-            last_summary = summaries[0]["session_summary"] if summaries else None
+        last_active = user.get("last_active_at")
 
-            mem_count = get_memory_count(pair_id=pair_id, user_id=user_id)
-            emotional_summary = db.get_emotional_summary(user_id, pair_id=pair_id, limit=6)
+        # Update last active at
+        now_str = datetime.now(timezone.utc).isoformat()
+        db.execute("UPDATE users SET last_active_at = ? WHERE id = ?", (now_str, user_id))
+        db.commit()
 
-            return last_summary, mem_count, emotional_summary
+        # Get or create active conversation
+        conversation_id = self._get_or_create_conversation(db, user_id)
 
-        last_summary, mem_count, emotional_summary = await asyncio.to_thread(_get_partner_details)
+        # Get unread proactive messages since last_active_at
+        unread_proactive = self._get_unread_proactive(db, user_id, last_active)
 
-        # Get partner instance from registry
-        partner_inst = get_partner_instance(user_id)
-        if not partner_inst:
-            raise ValueError(f"No generated partner found for user {user_id}")
+        # Fetch recent messages (last 20 messages)
+        msg_rows = db.execute(
+            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY sent_at DESC LIMIT 20",
+            (conversation_id,)
+        ).fetchall()
+        recent_messages = []
+        for r in reversed(msg_rows):
+            d = dict(r)
+            recent_messages.append({
+                "id": d["id"],
+                "role": d["role"],
+                "content": d["content"],
+                "sent_at": d["sent_at"],
+                "emotional_signal": d.get("emotional_signal")
+            })
 
-        # Calculate days together since partner creation
-        created_at_str = partner_inst.raw.get("created_at") or pair.get("created_at") or user.get("created_at")
-        days_together = 0
-        if created_at_str:
+        # Get memory count
+        memory_count = db.execute(
+            "SELECT COUNT(*) FROM episodic_memories WHERE user_id = ?",
+            (user_id,)
+        ).fetchone()[0]
+
+        # Days together calculation
+        days_together = 1
+        created_str = (partner or {}).get("generated_at") or (pair or {}).get("created_at") or user.get("created_at")
+        if created_str:
             try:
-                created_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
-                now_aware = datetime.now(timezone.utc)
-                days_together = max(0, (now_aware - created_dt).days)
+                dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                days_together = max(1, (datetime.now(timezone.utc) - dt).days)
             except Exception as e:
-                logger.error("Failed to parse partner created_at '%s': %s", created_at_str, e)
+                logger.error(f"Failed to calculate days together: {e}")
 
-        # Determine mood and energy
-        mood = "neutral"
-        if emotional_summary and emotional_summary.get("dominant_emotions"):
-            mood = ", ".join(emotional_summary["dominant_emotions"])
-        elif partner_inst.matching_profile:
-            mood = partner_inst.matching_profile.get("social_energy", "neutral")
+        # Mood & Energy
+        mood = life_state.get("partner_mood", "content") if life_state else "content"
+        energy = life_state.get("partner_energy", "normal") if life_state else "normal"
 
-        energy = "balanced"
-        if partner_inst.matching_profile:
-            energy = partner_inst.matching_profile.get("social_energy", "balanced")
-
-        last_seen = user.get("last_active_at") or user.get("last_seen")
+        partner_payload = {
+            "name": partner.get("name") if partner else "Partner",
+            "relationship_stage": pair.get("current_stage", "new") if pair else "new",
+            "current_mood": mood,
+            "current_energy": energy,
+            "days_together": days_together
+        }
 
         return {
-            "partner": {
-                "name": partner_inst.name,
-                "relationship_stage": pair.get("current_stage") or "new",
-                "current_mood": mood,
-                "current_energy": energy,
-            },
-            "last_conversation_summary": last_summary,
-            "unread_proactive_messages": unread_messages,
-            "memory_count": mem_count,
+            "partner": partner_payload,
+            "conversation_id": conversation_id,
+            "recent_messages": recent_messages,
+            "unread_proactive": unread_proactive,
+            "memory_count": memory_count,
             "days_together": days_together,
-            "last_seen": last_seen,
+            "last_seen": last_active
         }
+
+    def _get_or_create_conversation(self, db, user_id: str) -> str:
+        """
+        Gets the active conversation (most recent) or creates a new one.
+        Eden has one ongoing conversation — not a list.
+        Returns conversation_id.
+        """
+        row = db.execute(
+            "SELECT id FROM conversations WHERE user_id = ? ORDER BY started_at DESC LIMIT 1",
+            (user_id,)
+        ).fetchone()
+        if row:
+            return row["id"]
+
+        # If conversation doesn't exist, we must create it.
+        # Find partner_id
+        partner_row = db.execute("SELECT id FROM partners WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+        partner_id = partner_row["id"] if partner_row else "default_partner"
+        
+        # Get pair_id
+        pair_row = db.execute("SELECT id FROM relationship_pairs WHERE user_id = ? LIMIT 1", (user_id,)).fetchone()
+        pair_id = pair_row["id"] if pair_row else f"{user_id}::{partner_id}"
+
+        conv_id = f"conv_{user_id}_{int(time.time())}"
+        now_str = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            """
+            INSERT INTO conversations (id, user_id, pair_id, partner_id, started_at, message_count, processed)
+            VALUES (?, ?, ?, ?, ?, 0, 0)
+            """,
+            (conv_id, user_id, pair_id, partner_id, now_str)
+        )
+        db.commit()
+        return conv_id
+
+    def _get_unread_proactive(self, db, user_id: str, since: str | None) -> list[dict]:
+        """
+        Returns proactive messages sent since last_active_at.
+        Marks them as acknowledged.
+        """
+        if not since:
+            return []
+
+        rows = db.execute(
+            """
+            SELECT id, message_text, reason, delivered_at, scheduled_for, created_at
+            FROM proactive_events
+            WHERE user_id = ? AND status IN ('delivered', 'sent') AND created_at > ?
+            ORDER BY created_at ASC
+            """,
+            (user_id, since)
+        ).fetchall()
+
+        events = []
+        for r in rows:
+            events.append({
+                "id": r["id"],
+                "message": r["message_text"],
+                "trigger_type": r["reason"],
+                "sent_at": r["delivered_at"] or r["scheduled_for"] or r["created_at"]
+            })
+
+        if events:
+            ids = [e["id"] for e in events]
+            placeholders = ",".join("?" for _ in ids)
+            db.execute(
+                f"UPDATE proactive_events SET status = 'acknowledged' WHERE id IN ({placeholders})",
+                ids
+            )
+            db.commit()
+
+        return events
+
+    async def load_session(self, user_id: str) -> dict:
+        """
+        Legacy/compatibility method pointing to load.
+        """
+        from memory.store import db as store_db
+        # Open connection and run load
+        with store_db.get_connection() as conn:
+            return await self.load(conn, user_id)
 
     async def update_last_active(self, user_id: str):
         """
         Updates users.last_active_at to now.
         """
-        await asyncio.to_thread(db.update_last_active, user_id)
+        from memory.store import db as store_db
+        await asyncio.to_thread(store_db.update_last_active, user_id)

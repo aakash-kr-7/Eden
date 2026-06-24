@@ -14,9 +14,16 @@ from zoneinfo import ZoneInfo
 from config import settings
 
 # Global hooks for dynamic system injection
-retrieve_relevant_memories = None
-db = None
-get_partner_instance = None
+from memory.store import db
+from memory.retriever import MemoryRetriever
+from personality.registry import get_partner_instance
+import asyncio
+
+async def _retrieve_memories_wrapper(pair_id: str, user_id: str, query_text: str, n_results: int = 5) -> list[dict]:
+    retriever = MemoryRetriever()
+    return await asyncio.to_thread(retriever.retrieve, db.get_connection(), user_id, query_text, n_results)
+
+retrieve_relevant_memories = _retrieve_memories_wrapper
 
 logger = logging.getLogger(__name__)
 

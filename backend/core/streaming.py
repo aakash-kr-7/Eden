@@ -7,6 +7,7 @@
 from sse_starlette.sse import EventSourceResponse
 import json
 import logging
+import asyncio
 from core.llm import LLMCore
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,8 @@ logger = logging.getLogger(__name__)
 async def stream_partner_response(
     llm: LLMCore,
     system_prompt: str,
-    messages: list[dict]
+    messages: list[dict],
+    on_done = None
 ) -> EventSourceResponse:
     """
     Returns an SSE EventSourceResponse that streams partner response.
@@ -26,7 +28,7 @@ async def stream_partner_response(
     
     On stream completion:
     - Emit "done" event with full accumulated text
-    - This allows Flutter to save the complete message
+    - Save partner response to DB (handled via on_done callback)
     """
     async def generator():
         full_text = ""
@@ -34,6 +36,16 @@ async def stream_partner_response(
             async for chunk in llm.stream(system_prompt, messages):
                 full_text += chunk
                 yield {"data": json.dumps({"type": "token", "text": chunk})}
+                
+            if on_done:
+                try:
+                    if asyncio.iscoroutinefunction(on_done):
+                        await on_done(full_text)
+                    else:
+                        on_done(full_text)
+                except Exception as e:
+                    logger.error(f"Error in on_done callback of stream_partner_response: {e}", exc_info=True)
+                    
             yield {"data": json.dumps({"type": "done", "full_text": full_text})}
         except Exception as e:
             logger.error(f"Error in stream_partner_response generator: {e}", exc_info=True)

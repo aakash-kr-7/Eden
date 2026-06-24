@@ -15,10 +15,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/onboarding")
 
-db = None
-memory_store = None
-get_partner_instance = None
-resolve_or_assign_primary_pair = None
+from memory.store import db, MemoryStore
+from personality.registry import get_partner_instance, resolve_or_assign_primary_pair
+
+memory_store = MemoryStore()
 clear_cache = None
 plan_burst_response = None
 on_message_saved = None

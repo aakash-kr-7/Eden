@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/profile")
 
-db = None
-memory_store = None
+from memory.store import db, MemoryStore
+memory_store = MemoryStore()
 RelationshipEngine = None
 
 class ProfileUpdate(BaseModel):

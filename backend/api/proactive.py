@@ -7,7 +7,7 @@ from config import settings
 
 router = APIRouter(prefix="/proactive")
 
-db = None
+from memory.store import db
 ProactiveEngine = None
 
 
