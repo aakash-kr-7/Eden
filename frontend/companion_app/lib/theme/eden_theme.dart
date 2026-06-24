@@ -1,151 +1,139 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: theme/eden_theme.dart
+// PURPOSE: MaterialApp ThemeData for Eden. Dark theme only.
+// CONTEXT: Passed to MaterialApp.theme in main.dart.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'package:flutter/material.dart';
+import 'eden_colors.dart';
+import 'eden_typography.dart';
 
 class EdenTheme {
   EdenTheme._();
 
-  // --- Design System Colors ---
-  static const Color bgPrimary = Color(0xFF0A0A0F);
-  static const Color bgSurface = Color(0xFF13131A);
-  static const Color bgElevated = Color(0xFF1C1C26);
-  static const Color accentPrimary = Color(0xFF7B6EF6);
-  static const Color accentSecondary = Color(0xFFC4A882);
-  static const Color textPrimary = Color(0xFFF0EEF8);
-  static const Color textSecondary = Color(0xFF8A8799);
-  static const Color textTertiary = Color(0xFF4A4858);
-  static const Color destructive = Color(0xFFE05454);
-  static const Color success = Color(0xFF4EAF7A);
+  // ─── Color Bridges for Legacy Code Compatibility ──────────────────
+  static const Color bgPrimary = EdenColors.edenVoid;
+  static const Color bgSurface = EdenColors.edenSurface;
+  static const Color bgElevated = EdenColors.edenElevated;
+  static const Color accentPrimary = EdenColors.edenIris;
+  static const Color accentSecondary = EdenColors.edenGold;
+  static const Color textPrimary = EdenColors.textPrimary;
+  static const Color textSecondary = EdenColors.textSecondary;
+  static const Color textTertiary = EdenColors.textTertiary;
+  static const Color destructive = EdenColors.semanticError;
+  static const Color success = EdenColors.semanticSuccess;
 
-  // --- Font Families ---
+  // ─── Font Families ────────────────────────────────────────────────
   static const String fontDisplay = 'CormorantGaramond';
   static const String fontBody = 'PlusJakartaSans';
 
-  // --- TextStyles ---
-  static const TextStyle displayLarge = TextStyle(
-    fontFamily: fontDisplay,
-    fontSize: 38,
-    fontWeight: FontWeight.w300,
-    color: textPrimary,
-    letterSpacing: -0.5,
-    height: 1.15,
-  );
-
-  static const TextStyle displayMedium = TextStyle(
-    fontFamily: fontDisplay,
-    fontSize: 30,
-    fontWeight: FontWeight.w300,
-    color: textPrimary,
-    letterSpacing: -0.3,
-    height: 1.2,
-  );
-
-  static const TextStyle displaySmall = TextStyle(
-    fontFamily: fontDisplay,
-    fontSize: 24,
-    fontWeight: FontWeight.w400,
-    color: textPrimary,
-    letterSpacing: -0.2,
-    height: 1.25,
-  );
-
-  static const TextStyle bodyLarge = TextStyle(
-    fontFamily: fontBody,
-    fontSize: 16,
-    fontWeight: FontWeight.w400,
-    color: textPrimary,
-    height: 1.5,
-  );
-
-  static const TextStyle bodyMedium = TextStyle(
-    fontFamily: fontBody,
-    fontSize: 14,
-    fontWeight: FontWeight.w400,
-    color: textPrimary,
-    height: 1.45,
-  );
-
-  static const TextStyle bodySmall = TextStyle(
-    fontFamily: fontBody,
-    fontSize: 12,
-    fontWeight: FontWeight.w400,
-    color: textSecondary,
-    height: 1.4,
-  );
-
-  static const TextStyle emphasisLarge = TextStyle(
-    fontFamily: fontBody,
-    fontSize: 16,
-    fontWeight: FontWeight.bold,
-    color: textPrimary,
-    height: 1.4,
-  );
-
-  static const TextStyle emphasisMedium = TextStyle(
-    fontFamily: fontBody,
-    fontSize: 14,
-    fontWeight: FontWeight.bold,
-    color: textPrimary,
-    height: 1.35,
-  );
-
-  static const TextStyle labelMedium = TextStyle(
-    fontFamily: fontBody,
-    fontSize: 12,
-    fontWeight: FontWeight.w500,
-    color: textSecondary,
-    letterSpacing: 0.5,
-  );
-
-  static const TextStyle labelSmall = TextStyle(
-    fontFamily: fontBody,
-    fontSize: 10,
-    fontWeight: FontWeight.w400,
-    color: textTertiary,
+  // ─── Typography Bridges for Legacy Code Compatibility ─────────────
+  static const TextStyle displayLarge = EdenTypography.displayXl;
+  static const TextStyle displayMedium = EdenTypography.displayLg;
+  static const TextStyle displaySmall = EdenTypography.displayMd;
+  static const TextStyle bodyLarge = EdenTypography.bodyXl;
+  static const TextStyle bodyMedium = EdenTypography.bodyLg;
+  static const TextStyle bodySmall = EdenTypography.bodyMd;
+  static const TextStyle labelMedium = EdenTypography.label;
+  
+  static final TextStyle labelSmall = EdenTypography.bodySm.copyWith(
+    color: EdenColors.textTertiary,
     letterSpacing: 1.0,
   );
 
-  // --- ThemeData ---
+  static final TextStyle emphasisLarge = EdenTypography.bodyXl.copyWith(
+    fontWeight: FontWeight.bold,
+  );
+
+  static final TextStyle emphasisMedium = EdenTypography.bodyLg.copyWith(
+    fontWeight: FontWeight.bold,
+  );
+
+  static ThemeData dark() => themeData;
+
+  // ─── MaterialApp Dark ThemeData ───────────────────────────────────
   static ThemeData get themeData {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
-      scaffoldBackgroundColor: bgPrimary,
-      cardColor: bgSurface,
+      scaffoldBackgroundColor: EdenColors.edenDepth,
+      cardColor: EdenColors.edenSurface,
       dialogTheme: const DialogThemeData(
-        backgroundColor: bgSurface,
+        backgroundColor: EdenColors.edenSurface,
       ),
-      primaryColor: accentPrimary,
+      primaryColor: EdenColors.edenIris,
       colorScheme: const ColorScheme.dark(
-        primary: accentPrimary,
-        secondary: accentSecondary,
-        surface: bgSurface,
-        onPrimary: textPrimary,
-        onSecondary: textPrimary,
-        onSurface: textPrimary,
-        error: destructive,
+        primary: EdenColors.edenIris,
+        secondary: EdenColors.edenIris,
+        surface: EdenColors.edenSurface,
+        onPrimary: Colors.white,
+        onSecondary: Colors.white,
+        onSurface: EdenColors.textPrimary,
+        error: EdenColors.semanticError,
       ),
+      // Apply the typography scale to textTheme
       textTheme: const TextTheme(
-        displayLarge: displayLarge,
-        displayMedium: displayMedium,
-        displaySmall: displaySmall,
-        bodyLarge: bodyLarge,
-        bodyMedium: bodyMedium,
-        bodySmall: bodySmall,
-        labelMedium: labelMedium,
-        labelSmall: labelSmall,
+        displayLarge: EdenTypography.displayXl,
+        displayMedium: EdenTypography.displayLg,
+        displaySmall: EdenTypography.displayMd,
+        bodyLarge: EdenTypography.bodyXl,
+        bodyMedium: EdenTypography.bodyLg,
+        bodySmall: EdenTypography.bodyMd,
+        labelMedium: EdenTypography.label,
+        labelSmall: EdenTypography.bodySm,
       ),
+      // No Material ripple on most surfaces by default
+      splashFactory: NoSplash.splashFactory,
       textSelectionTheme: const TextSelectionThemeData(
-        cursorColor: accentPrimary,
-        selectionColor: Color(0x4D7B6EF6),
-        selectionHandleColor: accentPrimary,
+        cursorColor: EdenColors.edenIris,
+        selectionColor: EdenColors.edenIrisDim,
+        selectionHandleColor: EdenColors.edenIris,
       ),
+      // AppBar defaults removed (we construct custom floating appbars/headers)
       appBarTheme: const AppBarTheme(
-        backgroundColor: bgPrimary,
-        elevation: 0,
-        iconTheme: IconThemeData(color: textPrimary),
-        titleTextStyle: displaySmall,
+        backgroundColor: Colors.transparent,
+        elevation: 0.0,
+        scrolledUnderElevation: 0.0,
+        shadowColor: Colors.transparent,
+        iconTheme: IconThemeData(color: EdenColors.textPrimary),
+        titleTextStyle: EdenTypography.displayMd,
+      ),
+      // Custom input decoration defaults (no default underlines)
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: EdenColors.edenElevated,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 14.0),
+        hintStyle: EdenTypography.bodyXl.copyWith(color: EdenColors.textTertiary),
+        labelStyle: EdenTypography.bodyLg.copyWith(color: EdenColors.textSecondary),
+        focusedBorder: OutlineInputBorder(
+          borderSide: const BorderSide(color: EdenColors.edenIrisDim, width: 1.0),
+          borderRadius: BorderRadius.circular(28.0),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderSide: const BorderSide(color: EdenColors.edenRim, width: 1.0),
+          borderRadius: BorderRadius.circular(28.0),
+        ),
+        disabledBorder: OutlineInputBorder(
+          borderSide: BorderSide(color: EdenColors.edenRim.withValues(alpha: 0.5), width: 1.0),
+          borderRadius: BorderRadius.circular(28.0),
+        ),
+        border: OutlineInputBorder(
+          borderSide: const BorderSide(color: EdenColors.edenRim, width: 1.0),
+          borderRadius: BorderRadius.circular(28.0),
+        ),
+      ),
+      // Fade transition on routes everywhere
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: <TargetPlatform, PageTransitionsBuilder>{
+          TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.iOS: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.macOS: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+        },
       ),
       dividerTheme: const DividerThemeData(
-        color: bgElevated,
+        color: EdenColors.edenRim,
         thickness: 1,
         space: 1,
       ),

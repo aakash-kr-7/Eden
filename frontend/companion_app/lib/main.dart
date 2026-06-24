@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: main.dart
+// PURPOSE: Eden app entry point. Firebase init, Riverpod, routing.
+// CONTEXT: Bootstraps the entire Flutter application.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -37,11 +43,49 @@ final notificationServiceProvider = Provider<NotificationService>((ref) {
   return NotificationService(apiService);
 });
 
+// --- GoRouter Refresh Stream Listenable Helper ---
+class GoRouterRefreshStream extends ChangeNotifier {
+  late final StreamSubscription<dynamic> _subscription;
+
+  GoRouterRefreshStream(Stream<dynamic> stream) {
+    notifyListeners();
+    _subscription = stream.asBroadcastStream().listen((dynamic _) => notifyListeners());
+  }
+
+  @override
+  void dispose() {
+    _subscription.cancel();
+    super.dispose();
+  }
+}
+
 // --- GoRouter Routing ---
 
 final routerProvider = Provider<GoRouter>((ref) {
+  final authService = ref.watch(authServiceProvider);
+
   return GoRouter(
     initialLocation: '/',
+    refreshListenable: GoRouterRefreshStream(authService.authStateChanges),
+    redirect: (context, state) {
+      final isAuthenticated = authService.currentUser != null;
+
+      final isSplash = state.matchedLocation == '/';
+      final isAuth = state.matchedLocation == '/auth';
+
+      if (!isAuthenticated) {
+        // Force unauthenticated users to /auth unless they are already there or on the splash screen
+        if (!isAuth && !isSplash) {
+          return '/auth';
+        }
+      } else {
+        // Authenticated users should not visit /auth
+        if (isAuth) {
+          return '/';
+        }
+      }
+      return null;
+    },
     routes: [
       GoRoute(
         path: '/',
@@ -138,7 +182,7 @@ class _EdenAppState extends ConsumerState<EdenApp> {
     return MaterialApp.router(
       title: 'Eden',
       debugShowCheckedModeBanner: false,
-      theme: EdenTheme.themeData,
+      theme: EdenTheme.dark(),
       routerConfig: router,
     );
   }

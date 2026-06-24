@@ -1,7 +1,13 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: widgets/pill_option.dart
+// PURPOSE: Selectable pill for onboarding multiple-choice questions.
+// CONTEXT: Used by OnboardingScreen for option selection.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../theme/eden_theme.dart';
+import '../theme/eden_colors.dart';
 
 class PillOption extends StatelessWidget {
   final String text;
@@ -23,31 +29,31 @@ class PillOption extends StatelessWidget {
         onTap();
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
+        duration: const Duration(milliseconds: 200),
         curve: Curves.easeInOut,
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         decoration: BoxDecoration(
           color: isSelected 
-              ? EdenTheme.accentPrimary 
-              : EdenTheme.bgSurface.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(16),
+              ? EdenColors.edenIrisDim 
+              : EdenColors.glassLight,
+          borderRadius: BorderRadius.circular(14.0), // radius-md is 14px
           border: Border.all(
             color: isSelected 
-                ? EdenTheme.accentPrimary 
-                : EdenTheme.textSecondary.withValues(alpha: 0.15),
+                ? EdenColors.edenIris 
+                : EdenColors.glassBorder,
             width: 1.0,
           ),
         ),
         child: AnimatedDefaultTextStyle(
-          duration: const Duration(milliseconds: 250),
+          duration: const Duration(milliseconds: 200),
           curve: Curves.easeInOut,
           style: GoogleFonts.jost(
             fontSize: 14,
             fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
             color: isSelected 
-                ? EdenTheme.bgPrimary 
-                : EdenTheme.textPrimary.withValues(alpha: 0.78),
+                ? EdenColors.textAccent 
+                : EdenColors.textPrimary.withValues(alpha: 0.78),
           ),
           child: Text(text),
         ),
