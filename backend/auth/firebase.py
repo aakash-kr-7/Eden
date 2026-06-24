@@ -1,127 +1,154 @@
+# ═══════════════════════════════════════════════════════════════════
+# FILE: auth/firebase.py
+# PURPOSE: Firebase Auth initialization and JWT token verification.
+# CONTEXT: Used as FastAPI dependency on all authenticated endpoints.
+# ═══════════════════════════════════════════════════════════════════
+
+import base64
+import json
+import os
+import tempfile
 import logging
 import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
-
+from datetime import datetime
+from fastapi import Header, HTTPException, Depends
+from pydantic import BaseModel
 import firebase_admin
-from fastapi import Header, HTTPException
-from firebase_admin import auth as firebase_auth
-from firebase_admin import credentials
+from firebase_admin import credentials, auth
 
 from config import settings
 
 logger = logging.getLogger(__name__)
 
-@dataclass(frozen=True)
-class User:
-    user_id: str
-    email: Optional[str] = None
+# In-memory token cache: {token: (expiry_timestamp, data_dict)}
+_TOKEN_CACHE: dict[str, tuple[float, dict]] = {}
+TOKEN_CACHE_TTL = 300  # 5 minutes
 
-    @property
-    def uid(self) -> str:
-        """Alias for backwards compatibility with the old AuthenticatedIdentity."""
-        return self.user_id
+class AuthenticatedIdentity(BaseModel):
+    uid: str
+    email: str | None = None
 
-    @property
-    def display_name(self) -> Optional[str]:
-        """Alias for backwards compatibility with the old AuthenticatedIdentity."""
-        if self.email:
-            return self.email.split("@")[0]
-        return "User"
-
-# Keep the alias AuthenticatedIdentity so other files importing it don't break
-AuthenticatedIdentity = User
-
-# Simple in-memory token cache: token -> (User object, expiry_timestamp)
-_TOKEN_CACHE = {}
-
-def initialize_firebase_auth() -> None:
-    """Initialize Firebase Admin SDK or raise a clear startup error if credentials file doesn't exist."""
+def initialize_firebase():
+    """
+    Called on startup. Decodes Firebase credentials from base64 env if present,
+    otherwise loads from file path. Fallbacks to default app configuration.
+    """
     if firebase_admin._apps:
+        logger.info("Firebase already initialized.")
         return
 
-    cred_path_str = settings.FIREBASE_CREDENTIALS_PATH.strip()
-    if not cred_path_str:
-        raise RuntimeError(
-            "FIREBASE_CREDENTIALS_PATH is empty or not configured. "
-            "Please set FIREBASE_CREDENTIALS_PATH in your environment variables or .env file."
-        )
-
-    path = Path(cred_path_str)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Firebase credentials file not found at '{path}'. "
-            "Please ensure that the path is correct and the file exists."
-        )
-
-    app_kwargs = {"options": {"projectId": settings.FIREBASE_PROJECT_ID}}
-    cred = credentials.Certificate(path)
-    firebase_admin.initialize_app(cred, **app_kwargs)
-    logger.info("Firebase Admin initialized with credentials from: %s", path)
-
-def get_or_create_user(user_id: str, email: Optional[str]) -> None:
-    """Ensure user exists in the database and preference table (stubbed)."""
-    pass
-
-def verify_id_token(id_token: str) -> User:
-    """Verify Firebase ID token, cache verified token for 5 minutes, and register user in SQLite."""
-    now = time.time()
-    
-    # Check cache first
-    if id_token in _TOKEN_CACHE:
-        cached_user, cache_expiry = _TOKEN_CACHE[id_token]
-        if now < cache_expiry:
-            return cached_user
+    b64_creds = settings.FIREBASE_CREDENTIALS_B64
+    if b64_creds:
+        try:
+            decoded = base64.b64decode(b64_creds).decode("utf-8")
+            creds_dict = json.loads(decoded)
+            
+            # Write temp JSON file and use it
+            fd, temp_path = tempfile.mkstemp(suffix=".json")
+            try:
+                with os.fdopen(fd, "w") as tmp:
+                    tmp.write(decoded)
+                cred = credentials.Certificate(temp_path)
+                firebase_admin.initialize_app(cred)
+                logger.info("Firebase initialized successfully via decoded base64 credentials in temp file.")
+            finally:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase from base64 credentials: {e}")
+            raise e
+    else:
+        creds_path = settings.FIREBASE_CREDENTIALS_PATH
+        if os.path.exists(creds_path):
+            try:
+                cred = credentials.Certificate(creds_path)
+                firebase_admin.initialize_app(cred)
+                logger.info(f"Firebase initialized successfully from credential file: {creds_path}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Firebase from credentials path {creds_path}: {e}")
+                raise e
         else:
-            del _TOKEN_CACHE[id_token]
+            logger.warning(
+                f"Firebase credentials not found at {creds_path}. Initializing with default Application Credentials."
+            )
+            try:
+                firebase_admin.initialize_app()
+                logger.info("Firebase initialized via default credentials.")
+            except Exception as e:
+                logger.error(f"Failed to initialize Firebase with default credentials: {e}")
+                if settings.ENVIRONMENT != "development":
+                    raise e
 
-    # Clean cache if it gets too large
-    if len(_TOKEN_CACHE) > 1000:
-        expired_keys = [k for k, (_, exp) in _TOKEN_CACHE.items() if now >= exp]
-        for k in expired_keys:
-            del _TOKEN_CACHE[k]
+async def verify_token(authorization: str = Header(...)) -> dict:
+    """
+    FastAPI dependency. Extracts Bearer token, verifies it via firebase-admin,
+    and returns {"user_id": str, "email": str}. Caches results for 5 minutes.
+    """
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header format. Use 'Bearer <token>'.")
+    
+    token = authorization.split("Bearer ")[1].strip()
+    now = time.time()
+
+    # Check cache
+    if token in _TOKEN_CACHE:
+        cached_time, cached_data = _TOKEN_CACHE[token]
+        if now - cached_time < TOKEN_CACHE_TTL:
+            return cached_data
+        else:
+            _TOKEN_CACHE.pop(token, None)
+
+    # Dev/Mock fallback
+    if settings.ENVIRONMENT == "development" and (token.startswith("mock-") or token == "test"):
+        user_id = token.replace("mock-", "") if token.startswith("mock-") else "test_user_id"
+        email = f"{user_id}@example.com"
+        data = {"user_id": user_id, "email": email}
+        _TOKEN_CACHE[token] = (now, data)
+        return data
 
     try:
-        decoded = firebase_auth.verify_id_token(id_token, check_revoked=False)
-    except Exception as exc:
-        logger.warning("Firebase token verification failed: %s", exc)
-        raise HTTPException(
-            status_code=401,
-            detail=f"Invalid or expired Firebase token: {str(exc)}"
-        ) from exc
+        decoded_token = auth.verify_id_token(token)
+        user_id = decoded_token.get("uid") or decoded_token.get("sub")
+        email = decoded_token.get("email")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing uid attribute.")
+        
+        data = {"user_id": user_id, "email": email}
+        _TOKEN_CACHE[token] = (now, data)
+        return data
+    except Exception as e:
+        logger.error(f"Firebase token verification failed: {e}")
+        raise HTTPException(status_code=401, detail=f"Token verification failed: {str(e)}")
 
-    uid = decoded.get("uid") or decoded.get("user_id") or decoded.get("sub")
-    if not uid:
-        raise HTTPException(
-            status_code=401,
-            detail="Firebase token missing user identity identifier (uid)"
-        )
+async def get_authenticated_identity(authorization: str = Header(...)) -> AuthenticatedIdentity:
+    """
+    FastAPI dependency. Returns AuthenticatedIdentity with uid and email.
+    """
+    data = await verify_token(authorization)
+    return AuthenticatedIdentity(uid=data["user_id"], email=data.get("email"))
 
-    email = decoded.get("email")
+def get_or_create_user(db, user_id: str, email: str) -> dict:
+    """
+    Upserts user into the users table. If user is new, sets onboarding_complete = 0.
+    Returns the user row dict.
+    """
+    cursor = db.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    if row:
+        return dict(row)
 
-    # Upsert user records into db
-    try:
-        get_or_create_user(uid, email)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database synchronization failed during authentication: {str(exc)}"
-        )
+    now_str = datetime.utcnow().isoformat()
+    db.execute(
+        """
+        INSERT INTO users (id, email, onboarding_complete, created_at, last_active_at)
+        VALUES (?, ?, 0, ?, ?)
+        """,
+        (user_id, email, now_str, now_str)
+    )
+    db.commit()
 
-    user = User(user_id=uid, email=email)
-    _TOKEN_CACHE[id_token] = (user, now + 300) # Cache for 5 minutes
-    return user
-
-async def get_authenticated_identity(
-    authorization: Optional[str] = Header(default=None),
-) -> User:
-    """Dependency provider to fetch and verify Bearer token from authorization header."""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
-        raise HTTPException(status_code=401, detail="Authorization header must use Bearer token")
-
-    return verify_id_token(token.strip())
+    cursor = db.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    return dict(row)

@@ -1,19 +1,21 @@
-import logging
-import sys
+# ═══════════════════════════════════════════════════════════════════
+# FILE: main.py
+# PURPOSE: FastAPI application entry point for Eden backend.
+# CONTEXT: Startup, middleware, router mounting, background scheduler.
+# ═══════════════════════════════════════════════════════════════════
+
 import time
-import asyncio
-from contextlib import asynccontextmanager
-
+import logging
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi.middleware.cors import CORSMiddleware
+from apscheduler.schedulers.background import BackgroundScheduler
 
-from auth.firebase import initialize_firebase_auth
 from config import settings
+from db.init import initialize_database
+from auth.firebase import initialize_firebase
 
+# Import routers
 from api.chat import router as chat_router
 from api.onboarding import router as onboarding_router
 from api.profile import router as profile_router
@@ -21,107 +23,13 @@ from api.proactive import router as proactive_router
 from api.notifications import router as notifications_router
 from api.ops import router as ops_router
 
-# Setup logger before anything else
-logging.basicConfig(
-    level=logging.getLevelName(settings.LOG_LEVEL),
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-    ]
-)
+# Setup logging
+logging.basicConfig(level=settings.LOG_LEVEL)
+logger = logging.getLogger(__name__)
 
-logger = logging.getLogger("main")
+app = FastAPI(title="Eden API", version="2.0.0")
 
-# Background scheduler instance
-scheduler = AsyncIOScheduler()
-
-async def run_life_simulator():
-    """Trigger life simulator checks for all active user-partner pairs."""
-    logger.info("Executing life simulator background check (stubbed)...")
-    pass
-
-async def run_proactive_engine():
-    """Periodically evaluate and dispatch proactive messages to users."""
-    logger.info("Executing proactive engine background check (stubbed)...")
-    pass
-
-async def run_proactive_delivery():
-    """Periodically check and deliver pending proactive outreach messages."""
-    logger.info("Executing proactive delivery background check (stubbed)...")
-    pass
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # ── STARTUP ────────────────────────────────────────────────────────────
-    logger.info("=" * 60)
-    logger.info("Eden API starting up")
-    logger.info("=" * 60)
-
-    # 1. Validate configuration
-    try:
-        settings.validate()
-        logger.info("Configuration validation succeeded.")
-    except ValueError as e:
-        logger.critical("Configuration validation failed: %s", e)
-        sys.exit(1)
-
-    # 2. Connect database (stubbed out until rebuild)
-    logger.info("Database connection setup skipped during sanitization.")
-
-    # 4. Initialize Firebase SDK Auth
-    try:
-        initialize_firebase_auth()
-        logger.info("Firebase SDK Auth initialized.")
-    except Exception as e:
-        logger.critical("Firebase Admin initialization failed: %s", e)
-        sys.exit(1)
-
-    # 5. Start background jobs
-    scheduler.add_job(
-        run_life_simulator,
-        "interval",
-        seconds=settings.LIFE_SIMULATOR_TICK_SECONDS,
-        id="life_simulator",
-        replace_existing=True
-    )
-    scheduler.add_job(
-        run_proactive_engine,
-        "interval",
-        seconds=600,
-        id="proactive_engine",
-        replace_existing=True
-    )
-    scheduler.add_job(
-        run_proactive_delivery,
-        "interval",
-        seconds=300,
-        id="proactive_delivery",
-        replace_existing=True
-    )
-    scheduler.start()
-    logger.info("Background job scheduler initialized and started.")
-
-    yield # Serves API calls
-
-    # ── SHUTDOWN ───────────────────────────────────────────────────────────
-    logger.info("Graceful shutdown initiated...")
-    scheduler.shutdown(wait=False)
-    logger.info("Graceful shutdown completed successfully.")
-
-
-# FastAPI Application Definition
-app = FastAPI(
-    title="Eden API",
-    description="Production backend API for Eden partner relationship platform.",
-    version="2.0.0",
-    docs_url="/docs" if settings.DEBUG else None,
-    redoc_url="/redoc" if settings.DEBUG else None,
-    lifespan=lifespan,
-)
-
-# CORS Middleware Setup
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -130,93 +38,73 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Request Logging Middleware
+# Request logging middleware
 @app.middleware("http")
-async def request_logging_middleware(request: Request, call_next):
-    start_time = time.perf_counter()
-    try:
-        response = await call_next(request)
-        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
-        logger.info(
-            "%s %s - Status: %s - Duration: %sms",
-            request.method,
-            request.url.path,
-            response.status_code,
-            duration_ms
-        )
-        return response
-    except Exception as exc:
-        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
-        logger.error(
-            "%s %s - Failed - Duration: %sms - Error: %s",
-            request.method,
-            request.url.path,
-            duration_ms,
-            exc,
-            exc_info=True
-        )
-        raise exc
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    duration_ms = (time.time() - start_time) * 1000
+    logger.info(
+        f"Method: {request.method} Path: {request.url.path} Status: {response.status_code} Duration: {duration_ms:.2f}ms"
+    )
+    return response
 
-
-# Exception Handlers for Structured JSON Errors
+# Global Exception Handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error("Unhandled server exception caught: %s", exc, exc_info=True)
+    logger.error(f"Global exception: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={
-            "error": "InternalServerError",
-            "detail": "An unexpected error occurred on the server.",
-            "message": str(exc)
-        }
+        content={"error": str(exc), "type": type(exc).__name__}
     )
 
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": "HTTPException",
-            "detail": exc.detail
-        }
-    )
+# Mount routers
+app.include_router(chat_router, prefix="/api")
+app.include_router(onboarding_router, prefix="/api")
+app.include_router(profile_router, prefix="/api")
+app.include_router(proactive_router, prefix="/api")
+app.include_router(notifications_router, prefix="/api")
+app.include_router(ops_router, prefix="/api")
 
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=422,
-        content={
-            "error": "ValidationError",
-            "detail": "Input validation failed.",
-            "errors": exc.errors()
-        }
-    )
+@app.get("/health")
+async def health():
+    return {"status": "ok", "version": "2.0.0", "environment": settings.ENVIRONMENT}
 
+# Scheduler jobs (placeholder functions to run until underlying logic is implemented)
+def life_simulator_tick():
+    logger.info("Executing scheduled job: life_simulator_tick")
 
-# Mount Routers (group tags cleanly under /api prefix)
-app.include_router(chat_router, prefix="/api", tags=["chat"])
-app.include_router(onboarding_router, prefix="/api", tags=["onboarding"])
-app.include_router(profile_router, prefix="/api", tags=["profile"])
-app.include_router(proactive_router, prefix="/api", tags=["proactive"])
-app.include_router(notifications_router, prefix="/api", tags=["notifications"])
-app.include_router(ops_router, prefix="/api", tags=["ops"])
+def proactive_evaluate():
+    logger.info("Executing scheduled job: proactive_evaluate")
 
+def proactive_deliver():
+    logger.info("Executing scheduled job: proactive_deliver")
 
-# Health Check Endpoint
-@app.get("/health", tags=["health"])
-async def health_check():
-    return {
-        "status": "ok",
-        "version": "2.0.0",
-        "environment": settings.ENVIRONMENT
-    }
+def dream_loop_check():
+    logger.info("Executing scheduled job: dream_loop_check")
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "main:app",
-        host=settings.APP_HOST,
-        port=settings.APP_PORT,
-        reload=settings.DEBUG
-    )
+scheduler = BackgroundScheduler()
+
+def start_scheduler():
+    scheduler.add_job(life_simulator_tick, "interval", minutes=5)
+    scheduler.add_job(proactive_evaluate, "interval", minutes=15)
+    scheduler.add_job(proactive_deliver, "interval", minutes=5)
+    scheduler.add_job(dream_loop_check, "interval", minutes=10)
+    scheduler.start()
+    logger.info("Background scheduler started successfully")
+
+def stop_scheduler():
+    scheduler.shutdown()
+    logger.info("Background scheduler stopped successfully")
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Starting up Eden application...")
+    initialize_database()
+    initialize_firebase()
+    start_scheduler()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("Shutting down Eden application...")
+    stop_scheduler()

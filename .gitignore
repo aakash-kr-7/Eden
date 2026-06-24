@@ -50,3 +50,6 @@ frontend/companion_app/test/
 Thumbs.db
 Desktop.ini
 .agents/
+
+EDEN_ARCHITECTURE.md
+EDEN_DESIGN_SYSTEM.md
