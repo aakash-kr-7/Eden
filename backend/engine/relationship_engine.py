@@ -116,3 +116,101 @@ class RelationshipEngine:
         finally:
             if close_conn:
                 conn.close()
+
+    async def get_relationship_summary(self, db, user_id: str) -> dict:
+        """
+        Builds a comprehensive relationship summary for the user and their partner.
+        """
+        if hasattr(db, "get_connection"):
+            conn = db.get_connection()
+            close_conn = True
+        else:
+            conn = db
+            close_conn = False
+
+        try:
+            # 1. Partner and Relationship Pair
+            partner_row = conn.execute("""
+                SELECT id, name, relationship_stage, intimacy_tier, generated_at
+                FROM partners
+                WHERE user_id = ?
+            """, (user_id,)).fetchone()
+
+            if not partner_row:
+                return {}
+
+            partner_id = partner_row["id"]
+            partner_name = partner_row["name"]
+            stage = partner_row["relationship_stage"] or "new"
+            intimacy_tier = partner_row["intimacy_tier"] or 1
+
+            pair_row = conn.execute("""
+                SELECT closeness_score, trust_score, openness_score, comfort_score, rhythm_score, topic_familiarity_score, proactive_cadence, created_at
+                FROM relationship_pairs
+                WHERE user_id = ? AND partner_id = ?
+            """, (user_id, partner_id)).fetchone()
+
+            scores = {}
+            proactive_cadence = "balanced"
+            if pair_row:
+                scores = {
+                    "closeness": pair_row["closeness_score"] or 0.18,
+                    "trust": pair_row["trust_score"] or 0.18,
+                    "openness": pair_row["openness_score"] or 0.12,
+                    "comfort": pair_row["comfort_score"] or 0.14,
+                    "rhythm": pair_row["rhythm_score"] or 0.10,
+                    "topic_familiarity": pair_row["topic_familiarity_score"] or 0.05,
+                }
+                proactive_cadence = pair_row["proactive_cadence"] or "balanced"
+
+            # 2. Relationship Events
+            event_rows = conn.execute("""
+                SELECT event_type, description, occurred_at, emotional_weight
+                FROM relationship_events
+                WHERE user_id = ?
+                ORDER BY occurred_at DESC
+                LIMIT 10
+            """, (user_id,)).fetchall()
+            events = [dict(r) for r in event_rows]
+
+            # 3. Narrative Summary
+            narrative_row = conn.execute("""
+                SELECT summary, updated_at
+                FROM narrative_summaries
+                WHERE user_id = ?
+                ORDER BY updated_at DESC LIMIT 1
+            """, (user_id,)).fetchone()
+            narrative = narrative_row["summary"] if narrative_row else "Your story is just beginning."
+
+            # 4. Basic counts
+            conv_count = conn.execute(
+                "SELECT COUNT(*) FROM conversations WHERE user_id = ?", (user_id,)
+            ).fetchone()[0]
+            memory_count = conn.execute(
+                "SELECT COUNT(*) FROM episodic_memories WHERE user_id = ?", (user_id,)
+            ).fetchone()[0]
+
+            introduced_str = partner_row["generated_at"]
+            days_together = 1
+            if introduced_str:
+                try:
+                    intro_dt = datetime.fromisoformat(str(introduced_str).split(".")[0])
+                    days_together = max(1, (datetime.utcnow() - intro_dt).days)
+                except Exception:
+                    pass
+
+            return {
+                "partner_name": partner_name,
+                "stage": stage,
+                "intimacy_tier": intimacy_tier,
+                "days_together": days_together,
+                "conversation_count": conv_count,
+                "memory_count": memory_count,
+                "proactive_cadence": proactive_cadence,
+                "scores": scores,
+                "narrative": narrative,
+                "events": events
+            }
+        finally:
+            if close_conn:
+                conn.close()

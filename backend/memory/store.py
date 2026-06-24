@@ -6,7 +6,7 @@
 
 import sqlite3
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from memory.embedder import Embedder
 from db.init import get_connection
 import logging
@@ -750,12 +750,215 @@ class Database:
     def delete_user(self, user_id: str):
         with self.get_connection() as conn:
             conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.execute("DELETE FROM vec_memories WHERE rowid NOT IN (SELECT id FROM episodic_memories)")
+            conn.execute("DELETE FROM memories_fts WHERE rowid NOT IN (SELECT id FROM episodic_memories)")
             conn.commit()
 
     def update_last_active(self, user_id: str):
         now = datetime.now(timezone.utc).isoformat()
         with self.get_connection() as conn:
             conn.execute("UPDATE users SET last_active_at = ? WHERE id = ?", (now, user_id))
+            conn.commit()
+
+    def invalidate_fcm_token(self, fcm_token: str):
+        with self.get_connection() as conn:
+            conn.execute("UPDATE users SET fcm_token = NULL WHERE fcm_token = ?", (fcm_token,))
+            conn.commit()
+
+    def update_user_fcm_token(self, user_id: str, fcm_token: str | None):
+        with self.get_connection() as conn:
+            conn.execute("UPDATE users SET fcm_token = ? WHERE id = ?", (fcm_token, user_id))
+            conn.commit()
+
+    def update_user_notification_preferences(self, user_id: str, prefs: dict):
+        with self.get_connection() as conn:
+            conn.execute("UPDATE users SET notification_preferences = ? WHERE id = ?", (json.dumps(prefs), user_id))
+            conn.commit()
+
+    def get_user_notification_preferences(self, user_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT notification_preferences FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row and row["notification_preferences"]:
+                try:
+                    return json.loads(row["notification_preferences"])
+                except Exception:
+                    pass
+            return None
+
+    def delete_memory(self, memory_id: int, user_id: str):
+        store = MemoryStore()
+        with self.get_connection() as conn:
+            store.delete(conn, memory_id, user_id)
+
+    def pin_memory(self, memory_id: int, user_id: str) -> float:
+        store = MemoryStore()
+        with self.get_connection() as conn:
+            store.pin(conn, memory_id, user_id)
+            row = conn.execute("SELECT salience_score FROM episodic_memories WHERE id = ?", (memory_id,)).fetchone()
+            salience = row["salience_score"] if row else 0.85
+            return salience
+
+    def get_pending_proactive_events(self, user_id: str) -> list[dict]:
+        with self.get_connection() as conn:
+            rows = conn.execute("""
+                SELECT id, message_text, reason, delivered_at, scheduled_for, created_at
+                FROM proactive_events
+                WHERE user_id = ? AND status IN ('delivered', 'sent')
+                ORDER BY delivered_at DESC, created_at DESC
+            """, (user_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def acknowledge_proactive_event(self, message_id: str, user_id: str) -> bool:
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT user_id FROM proactive_events WHERE id = ?", (message_id,)).fetchone()
+            if not row:
+                return False
+            if row["user_id"] != user_id:
+                raise PermissionError("Forbidden")
+            conn.execute("UPDATE proactive_events SET status = 'acknowledged' WHERE id = ?", (message_id,))
+            conn.commit()
+            return True
+
+    def get_database_health(self) -> dict:
+        with self.get_connection() as conn:
+            conn.execute("SELECT 1").fetchone()
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            table_names = [t["name"] for t in tables]
+            row_counts = {}
+            for name in table_names:
+                try:
+                    count = conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+                    row_counts[name] = count
+                except Exception:
+                    pass
+            return {
+                "ok": True,
+                "tables": table_names,
+                "row_counts": row_counts
+            }
+
+    def get_memory_system_stats(self) -> dict:
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT COUNT(*), AVG(salience_score) FROM episodic_memories").fetchone()
+            total = row[0] if row and row[0] is not None else 0
+            avg_salience = row[1] if row and row[1] is not None else 0.0
+            return {
+                "ok": True,
+                "total_memories": total,
+                "avg_salience": float(avg_salience)
+            }
+
+    def get_proactive_queue_stats(self) -> dict:
+        with self.get_connection() as conn:
+            row = conn.execute("""
+                SELECT COUNT(*), MIN(scheduled_for) 
+                FROM proactive_queue 
+                WHERE sent = 0 AND cancelled = 0
+            """).fetchone()
+            
+            pending = row[0] if row and row[0] is not None else 0
+            min_scheduled = row[1]
+            
+            age_minutes = 0.0
+            if pending > 0 and min_scheduled:
+                try:
+                    sched_str = min_scheduled
+                    if sched_str.endswith("Z"):
+                        sched_str = sched_str[:-1] + "+00:00"
+                    sched_dt = datetime.fromisoformat(sched_str)
+                    age_minutes = max(0.0, (datetime.now(timezone.utc) - sched_dt).total_seconds() / 60.0)
+                except Exception:
+                    pass
+                    
+            return {
+                "pending": pending,
+                "oldest_pending_age_minutes": age_minutes
+            }
+
+    def get_active_users_count(self, days: int = 7) -> int:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self.get_connection() as conn:
+            row = conn.execute("""
+                SELECT COUNT(*) FROM users 
+                WHERE last_active_at >= ?
+            """, (cutoff,)).fetchone()
+            return row[0] if row else 0
+
+    def list_ops_users_paginated(self, page: int = 1, limit: int = 50) -> list[dict]:
+        offset = (page - 1) * limit
+        with self.get_connection() as conn:
+            rows = conn.execute("""
+                SELECT u.id, u.email, u.display_name, u.onboarding_complete, u.created_at, u.last_active_at, p.name as partner_name
+                FROM users u
+                LEFT JOIN partners p ON p.user_id = u.id
+                ORDER BY u.created_at DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset)).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_user_gdpr_export(self, user_id: str) -> dict | None:
+        with self.get_connection() as conn:
+            user_row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            if not user_row:
+                return None
+
+            user_data = dict(user_row)
+            partner_rows = conn.execute("SELECT id, name, archetype_seed, flaw_profile, relationship_stage, intimacy_tier, generated_at, last_evolved_at FROM partners WHERE user_id = ?", (user_id,)).fetchall()
+            partners_data = [dict(r) for r in partner_rows]
+
+            memory_rows = conn.execute("SELECT id, memory_text, memory_type, salience_score, emotional_valence, is_pinned, recall_count, tags, created_at FROM episodic_memories WHERE user_id = ?", (user_id,)).fetchall()
+            memories_data = [dict(r) for r in memory_rows]
+
+            summary_rows = conn.execute("SELECT id, summary, updated_at FROM narrative_summaries WHERE user_id = ?", (user_id,)).fetchall()
+            summaries_data = [dict(r) for r in summary_rows]
+
+            event_rows = conn.execute("SELECT id, event_type, description, occurred_at, emotional_weight FROM relationship_events WHERE user_id = ?", (user_id,)).fetchall()
+            events_data = [dict(r) for r in event_rows]
+
+            return {
+                "user": user_data,
+                "partners": partners_data,
+                "memories": memories_data,
+                "summaries": summaries_data,
+                "relationship_events": events_data
+            }
+
+    def reset_user_data(self, user_id: str):
+        with self.get_connection() as conn:
+            # 1. Reset user onboarding fields
+            conn.execute("""
+                UPDATE users
+                SET onboarding_complete = 0,
+                    onboarding_completed = 0,
+                    onboarding_data = '{}',
+                    onboarding_signals = NULL,
+                    fcm_token = NULL,
+                    display_name = NULL,
+                    relationship_type_intent = NULL,
+                    attachment_style = NULL,
+                    communication_pace = NULL,
+                    emotional_depth_preference = NULL,
+                    humor_style = NULL,
+                    last_active_at = NULL
+                WHERE id = ?
+            """, (user_id,))
+
+            # 2. Delete data from related tables
+            tables = [
+                "partners", "conversations", "messages", "episodic_memories",
+                "relationship_events", "life_state", "proactive_queue",
+                "notification_log", "onboarding_sessions", "relationship_pairs",
+                "proactive_events", "user_preferences", "user_facts",
+                "partner_facts", "entities", "entity_relationships",
+                "emotional_events", "behavioral_patterns", "narrative_summaries",
+                "life_events"
+            ]
+            for table in tables:
+                conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
+            
+            # Clean up vec_memories and memories_fts
+            conn.execute("DELETE FROM vec_memories WHERE rowid NOT IN (SELECT id FROM episodic_memories)")
+            conn.execute("DELETE FROM memories_fts WHERE rowid NOT IN (SELECT id FROM episodic_memories)")
             conn.commit()
 
 db = Database()

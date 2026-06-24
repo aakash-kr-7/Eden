@@ -185,7 +185,19 @@ Generate a brief summary (1-2 sentences) and determine the dominant emotional to
         """, (user_id,))
         
         db.commit()
-        logger.info(f"Conversation {conversation_id} successfully consolidated. Stage: {next_stage}, Jokes: {len(inside_jokes)}")
+        logger.info(f"Conversation {conversation_id} successfully consolidated. Jokes: {len(inside_jokes)}")
+
+    async def consolidate_user_conversations(self, db: sqlite3.Connection, user_id: str):
+        """
+        Consolidates all unprocessed conversations for a user.
+        """
+        rows = db.execute("""
+            SELECT id FROM conversations
+            WHERE processed = 0 AND user_id = ?
+            ORDER BY started_at ASC
+        """, (user_id,)).fetchall()
+        for r in rows:
+            await self.process_conversation(db, r["id"], user_id)
         
     async def apply_decay(self, db: sqlite3.Connection, user_id: str):
         """

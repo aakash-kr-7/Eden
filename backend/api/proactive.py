@@ -1,22 +1,17 @@
-import logging
-from typing import Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+# ═══════════════════════════════════════════════════════════════════
+# FILE: api/proactive.py
+# PURPOSE: Partner's proactive messages — sent while user was away.
+# CONTEXT: Called by Flutter on session start to load "while you were away" messages.
+# ═══════════════════════════════════════════════════════════════════
 
+import logging
+from fastapi import APIRouter, Depends, HTTPException
 from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
-from config import settings
+from memory.store import db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/proactive")
-
-from memory.store import db
-from engine.proactive_engine import ProactiveEngine
-
-
-def _require_ops_access(x_admin_token: Optional[str] = Header(default=None)) -> None:
-    if settings.DEBUG:
-        return
-    if settings.ADMIN_DEBUG_TOKEN and x_admin_token == settings.ADMIN_DEBUG_TOKEN:
-        return
-    raise HTTPException(status_code=403, detail="Ops access denied")
 
 
 @router.get("/pending")
@@ -24,22 +19,15 @@ async def get_pending_proactive(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     """
-    Returns all unsent (unacknowledged but sent/delivered to FCM) proactive messages for this user.
-    These are the messages that the partner sent while the user was away.
+    Returns all unsent/unacknowledged proactive messages for this user.
+    These are messages the companion sent while the user was away.
     """
-    if not db:
-        return []
     user_id = identity.uid
-    rows = db.conn.execute(
-        """
-        SELECT id, message_text, reason, delivered_at, scheduled_for, created_at
-        FROM proactive_events
-        WHERE user_id = ? AND status IN ('delivered', 'sent')
-        ORDER BY delivered_at DESC, created_at DESC
-        """,
-        (user_id,),
-    ).fetchall()
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
+    rows = db.get_pending_proactive_events(user_id)
     events = []
     for r in rows:
         sent_at = r["delivered_at"] or r["scheduled_for"] or r["created_at"]
@@ -52,42 +40,23 @@ async def get_pending_proactive(
     return events
 
 
-@router.post("/acknowledge/{message_id}")
+@router.post("/acknowledge/{id}")
 async def acknowledge_proactive(
-    message_id: str,
+    id: str,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
     """Marks a proactive message as acknowledged (read by the user)."""
-    if not db:
-        return {"status": "success"}
     user_id = identity.uid
-    row = db.conn.execute(
-        "SELECT user_id FROM proactive_events WHERE id = ?", (message_id,)
-    ).fetchone()
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    if not row:
-        raise HTTPException(status_code=404, detail="Proactive message not found")
-    if row["user_id"] != user_id:
+    try:
+        success = db.acknowledge_proactive_event(id, user_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Proactive message not found")
+    except PermissionError:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    db.conn.execute(
-        "UPDATE proactive_events SET status = 'acknowledged' WHERE id = ?",
-        (message_id,)
-    )
-    return {"status": "success"}
-
-
-@router.post("/trigger")
-async def trigger_proactive(
-    user_id: Optional[str] = Query(default=None),
-    x_admin_token: Optional[str] = Header(default=None),
-    identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
-):
-    """Admin-only endpoint to manually trigger evaluation for a user."""
-    _require_ops_access(x_admin_token)
-
-    target_user_id = user_id or identity.uid
-    engine = ProactiveEngine()
-    await engine.evaluate(db, target_user_id, force=True)
-
+    logger.info("Proactive message %s acknowledged by user %s", id, user_id)
     return {"status": "success"}

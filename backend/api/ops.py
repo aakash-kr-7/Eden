@@ -1,6 +1,8 @@
-# =============================================================================
-# api/ops.py — Ops / Admin API Router
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════
+# FILE: api/ops.py
+# PURPOSE: Admin and operational endpoints — health, user management, GDPR.
+# CONTEXT: Protected by X-Ops-Key header. Never exposed to Flutter clients.
+# ═══════════════════════════════════════════════════════════════════
 
 import time
 import logging
@@ -10,13 +12,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from config import settings
 from core.llm import check_llm_health
+from core.fcm import FCMSender
+from memory.store import db
+from memory.consolidator import MemoryConsolidator
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ops")
-
-db = None
-MemoryConsolidator = None
 
 
 def require_ops_key(x_ops_key: Optional[str] = Header(default=None)) -> str:
@@ -33,7 +35,7 @@ async def deep_health(
     """Deep health check of database, LLM gateway, memory index, queue, and user metrics."""
     # 1. Database health
     try:
-        db_health = db.get_database_health() if db else {"ok": False, "error": "Db stubbed"}
+        db_health = db.get_database_health()
     except Exception as exc:
         db_health = {"ok": False, "error": str(exc), "tables": [], "row_counts": {}}
 
@@ -49,19 +51,19 @@ async def deep_health(
 
     # 3. Memory system health
     try:
-        mem_stats = db.get_memory_system_stats() if db else {"ok": False, "error": "Db stubbed"}
+        mem_stats = db.get_memory_system_stats()
     except Exception as exc:
         mem_stats = {"ok": False, "error": str(exc), "total_memories": 0, "avg_salience": 0.0}
 
     # 4. Proactive queue health
     try:
-        queue_stats = db.get_proactive_queue_stats() if db else {"pending": 0, "oldest_pending_age_minutes": 0.0}
+        queue_stats = db.get_proactive_queue_stats()
     except Exception as exc:
         queue_stats = {"pending": 0, "oldest_pending_age_minutes": 0.0, "error": str(exc)}
 
     # 5. Active users count (7 days)
     try:
-        active_users_7d = db.get_active_users_count(days=7) if db else 0
+        active_users_7d = db.get_active_users_count(days=7)
     except Exception:
         active_users_7d = 0
 
@@ -80,7 +82,7 @@ async def list_users(
     x_ops_key: str = Depends(require_ops_key),
 ):
     """Get paginated list of users and relationship statuses (50 per page)."""
-    users_list = db.list_ops_users_paginated(page=page, limit=50) if db else []
+    users_list = db.list_ops_users_paginated(page=page, limit=50)
     return {
         "users": users_list,
         "page": page,
@@ -94,8 +96,8 @@ async def export_user(
     user_id: str,
     x_ops_key: str = Depends(require_ops_key),
 ):
-    """GDPR-compliant data export of user profile, partner basics, memories, summaries, and events."""
-    user_export = db.get_user_gdpr_export(user_id) if db else None
+    """GDPR-compliant data export of user profile, partner basics, memories, summaries, and events (no messages)."""
+    user_export = db.get_user_gdpr_export(user_id)
     if not user_export:
         raise HTTPException(status_code=404, detail="User not found")
     return user_export
@@ -107,14 +109,13 @@ async def trigger_consolidation(
     x_ops_key: str = Depends(require_ops_key),
 ):
     """Trigger manual memory consolidation for a user."""
-    if not db or not MemoryConsolidator:
-        return {"status": "success", "message": "Stubbed"}
     user = db.get_user(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     consolidator = MemoryConsolidator()
-    await consolidator.consolidate(user_id)
+    with db.get_connection() as conn:
+        await consolidator.consolidate_user_conversations(conn, user_id)
     return {"status": "success", "message": "Memory consolidation triggered successfully"}
 
 
@@ -131,9 +132,6 @@ async def reset_user(
     if x_confirm != "yes-delete-everything":
         raise HTTPException(status_code=400, detail="X-Confirm header must be 'yes-delete-everything'")
 
-    if not db:
-        return {"status": "success"}
-
     user = db.get_user(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -149,20 +147,36 @@ async def delete_user(
     x_ops_key: str = Depends(require_ops_key),
 ):
     """GDPR erasure request to delete user and all associated data."""
-    if not db:
-        return {"status": "success"}
     user = db.get_user(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Audit log entry for erasure request
-    db.log_system_event(
-        kind="gdpr_erasure_user_deleted",
-        severity="info",
-        user_id=user_id,
-        payload={"deleted_user_id": user_id, "reason": "GDPR right to erasure request"},
-    )
-
     db.delete_user(user_id)
     logger.info("Admin GDPR erasure completed for user %s", user_id)
     return {"status": "success", "message": f"User {user_id} and all related data deleted successfully"}
+
+
+@router.post("/test_notification/{user_id}")
+async def test_notification(
+    user_id: str,
+    x_ops_key: str = Depends(require_ops_key),
+):
+    """
+    Fetches user's fcm_token, calls FCMSender.send() with a test message, and returns the result.
+    """
+    user = db.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    fcm_token = user.get("fcm_token")
+    if not fcm_token:
+        return {"sent": False, "token_exists": False}
+
+    fcm_sender = FCMSender()
+    sent = await fcm_sender.send(
+        fcm_token=fcm_token,
+        title="Test Notification",
+        body="This is a test push notification.",
+        data={"type": "test_notification"}
+    )
+    return {"sent": sent, "token_exists": True}

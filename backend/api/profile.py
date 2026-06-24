@@ -1,19 +1,23 @@
+# ═══════════════════════════════════════════════════════════════════
+# FILE: api/profile.py
+# PURPOSE: User profile, relationship summary, and memory vault API.
+# CONTEXT: Used by settings screen and memory vault in Flutter.
+# ═══════════════════════════════════════════════════════════════════
+
 import logging
-import json
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
+from memory.store import db
+from engine.relationship_engine import RelationshipEngine
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/profile")
 
-from memory.store import db, MemoryStore
-memory_store = MemoryStore()
-RelationshipEngine = None
 
 class ProfileUpdate(BaseModel):
     display_name: Optional[str] = None
@@ -21,6 +25,7 @@ class ProfileUpdate(BaseModel):
     emotional_depth_preference: Optional[str] = None
     allow_proactive_messages: Optional[bool] = None
     allow_push_notifications: Optional[bool] = None
+
 
 @router.get("/me")
 async def get_my_profile(
@@ -64,23 +69,29 @@ async def get_my_profile(
         "preferences": preferences,
     }
 
+
 @router.get("/relationship")
 async def get_relationship_details(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    if not RelationshipEngine:
-        return {}
+    user = db.get_user(identity.uid) if db else None
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     engine = RelationshipEngine()
-    summary = await engine.get_relationship_summary(identity.uid)
+    summary = await engine.get_relationship_summary(db, identity.uid)
     return summary
+
 
 @router.patch("/me")
 async def update_profile(
     payload: ProfileUpdate,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    if not db:
-        return {"success": False}
+    user = db.get_user(identity.uid) if db else None
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     if payload.display_name is not None:
         db.update_user_display_name(identity.uid, payload.display_name)
         
@@ -123,6 +134,7 @@ async def update_profile(
         "preferences": preferences,
     }
 
+
 @router.get("/memories")
 async def get_memories(
     type: Optional[str] = Query(None),
@@ -131,8 +143,10 @@ async def get_memories(
     limit: int = Query(10, ge=1, le=100),
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    if not db:
-        return {"memories": [], "total": 0, "page": page, "limit": limit}
+    user = db.get_user(identity.uid) if db else None
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     primary = db.get_primary_pair(identity.uid)
     if not primary:
         return {"memories": [], "total": 0, "page": page, "limit": limit}
@@ -145,57 +159,75 @@ async def get_memories(
         page=page,
         limit=limit
     )
+
+    cleaned_memories = []
+    for mem in memories:
+        m = dict(mem)
+        m.pop("decay_factor", None)
+        # Remove source fields
+        keys_to_remove = [k for k in m.keys() if k == "source" or k.startswith("source_")]
+        for k in keys_to_remove:
+            m.pop(k, None)
+        cleaned_memories.append(m)
     
     return {
-        "memories": memories,
+        "memories": cleaned_memories,
         "total": total,
         "page": page,
         "limit": limit
     }
 
-@router.delete("/memories/{memory_id}")
+
+@router.delete("/memories/{id}")
 async def delete_vault_memory(
-    memory_id: str,
+    id: int,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    if not db or not memory_store:
-        return {"success": False}
+    user = db.get_user(identity.uid) if db else None
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     primary = db.get_primary_pair(identity.uid)
     if not primary:
         raise HTTPException(status_code=404, detail="Relationship not found")
     pair_id = primary["id"]
     
-    if not db.verify_memory_ownership(pair_id, memory_id):
+    if not db.verify_memory_ownership(pair_id, id):
         raise HTTPException(status_code=404, detail="Memory not found")
         
-    await memory_store.delete(memory_id)
+    db.delete_memory(id, identity.uid)
     return {"success": True, "deleted": True}
 
-@router.post("/memories/{memory_id}/pin")
+
+@router.post("/memories/{id}/pin")
 async def pin_vault_memory(
-    memory_id: str,
+    id: int,
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    if not db or not memory_store:
-        return {"success": False}
+    user = db.get_user(identity.uid) if db else None
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     primary = db.get_primary_pair(identity.uid)
     if not primary:
         raise HTTPException(status_code=404, detail="Relationship not found")
     pair_id = primary["id"]
     
-    if not db.verify_memory_ownership(pair_id, memory_id):
+    if not db.verify_memory_ownership(pair_id, id):
         raise HTTPException(status_code=404, detail="Memory not found")
         
-    new_salience = await memory_store.pin_and_boost_salience(memory_id)
-        
+    new_salience = db.pin_memory(id, identity.uid)
     return {"success": True, "pinned": True, "salience": new_salience}
+
 
 @router.delete("/memories")
 async def delete_all_vault_memories(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    if not db:
-        return {"success": False}
+    user = db.get_user(identity.uid) if db else None
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     primary = db.get_primary_pair(identity.uid)
     if not primary:
         raise HTTPException(status_code=404, detail="Relationship not found")
@@ -204,11 +236,14 @@ async def delete_all_vault_memories(
     db.clear_all_memories(pair_id)
     return {"success": True, "deleted_all": True}
 
+
 @router.delete("/me")
 async def delete_my_profile(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    if not db:
-        return {"success": False}
+    user = db.get_user(identity.uid) if db else None
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
     db.delete_user(identity.uid)
     return {"success": True, "deleted_user": True}
