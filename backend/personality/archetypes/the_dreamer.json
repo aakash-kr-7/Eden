@@ -1,8 +1,8 @@
 {
   "archetype_id": "the_dreamer",
   "base_name_pool": [
+    "Quinn",
     "Julian",
-    "Silas",
     "Finn"
   ],
   "core_temperament": "playful",

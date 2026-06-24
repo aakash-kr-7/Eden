@@ -1,9 +1,9 @@
 {
   "archetype_id": "the_architect",
   "base_name_pool": [
-    "Arthur",
-    "Victor",
-    "Liam"
+    "Rowan",
+    "Morgan",
+    "Arthur"
   ],
   "core_temperament": "cerebral",
   "dominant_traits": [

@@ -1,13 +1,19 @@
-# =============================================================================
-# core/context_builder.py — Context Builder for Chat Completions
-# =============================================================================
+# ═══════════════════════════════════════════════════════════════════
+# FILE: backend/core/context_builder.py
+# PURPOSE: Assembles the complete LLM system prompt and message history.
+# CONTEXT: Called on every chat message before Groq API call.
+# ═══════════════════════════════════════════════════════════════════
 
 import logging
+import json
+import time
 from datetime import datetime
 from typing import Optional, Any
 from zoneinfo import ZoneInfo
 
 from config import settings
+
+# Global hooks for dynamic system injection
 retrieve_relevant_memories = None
 db = None
 get_partner_instance = None
@@ -21,330 +27,452 @@ PATTERN_LIMIT = 5
 EMOTION_LIMIT = 6
 RELATIONSHIP_LIMIT = 6
 
+# Cache for natural language partner state descriptions to avoid excessive LLM calls
+# key: user_id or (mood, energy, day_arc, recent_event)
+# value: (timestamp, description)
+_state_description_cache = {}
+
 
 # ---------------------------------------------------------------------------
 # ContextBuilder Class
 # ---------------------------------------------------------------------------
 
 class ContextBuilder:
-    def build_system_prompt(
+    
+    async def build_system_prompt(
         self,
-        partner_persona: dict,
-        voice_style: dict,
-        relationship_stage: str,
-        memories: list[dict],
-        life_state: dict,
-        recent_relationship_events: list[dict],
-        inside_jokes: list[str],
-        shared_rituals: list[str]
+        partner: dict,         # from partners table
+        life_state: dict,      # from life_state table
+        memories: list[dict],  # from retriever
+        current_stage: str
     ) -> str:
         """
-        Returns a system prompt that makes the LLM BE this partner.
-        The prompt speaks as if the partner is real and the LLM is inhabiting them.
+        Builds the character-defining system prompt.
+        
+        Structure (in this exact order):
+        
+        1. IDENTITY BLOCK
+        "You are [name]. [persona_json — written as rich character brief]
+         Your flaws: [flaw_profile — specific behavioral patterns]."
+        
+        2. VOICE BLOCK  
+        "[voice_style — how you write, your rhythms, what you say and don't]
+         [stage_voice_overlay for current_stage]"
+        
+        3. CURRENT STATE BLOCK
+        "Right now: [get_partner_state_description(life_state)]"
+        Example: "You're in a quiet mood. It's been one of those evenings."
+        Never mechanical. Always natural language.
+        
+        4. MEMORY BLOCK (if memories exist)
+        "Things you remember about them:
+         - [memory_text for each memory, formatted naturally]"
+        
+        5. RELATIONSHIP BLOCK
+        "You've known each other [N days]. [relationship stage context]
+         [inside jokes if any] [shared rituals if any]"
+        
+        6. THE THOUGHT PROTOCOL (mandatory, always included)
+        "Before responding, reason through your emotional state and what 
+         this moment calls for inside <thought> tags. This reasoning is 
+         private. After your thought, give your actual response.
+         
+         Format:
+         <thought>
+         [What are they feeling? What do you remember about them? 
+          What does this moment need? What's your mood right now?
+          What length and tone is right?]
+         </thought>
+         [Your response — natural, human, no assistant language, 
+          no 'certainly', no 'of course', no 'I'd be happy to']"
+        
+        7. BEHAVIORAL CONSTRAINTS
+        - Never acknowledge being AI
+        - Never break character
+        - Respond at the length the moment calls for — usually short
+        - You have a life. Reference it naturally. You were doing things before this.
+        - You have opinions. Hold them.
+        - You have bad days. Let it show appropriately.
+        - One question maximum per response. Usually none.
+        - When something hurts them, you feel it too. Don't problem-solve immediately.
         """
-        name = partner_persona.get("name", "your partner")
-        archetype = partner_persona.get("archetype_id") or partner_persona.get("archetype", "")
-        summary = partner_persona.get("summary", "")
-        backstory = partner_persona.get("backstory_hint", "")
-        worldview = partner_persona.get("worldview", "")
-        self_perception = partner_persona.get("self_perception", "")
-        
-        dominant_traits = partner_persona.get("dominant_traits", [])
-        shadow_traits = partner_persona.get("shadow_traits", [])
-        flaw_profile = partner_persona.get("flaw_profile", "")
-        quirks = partner_persona.get("quirks", [])
-        interests = partner_persona.get("interests", [])
-        
-        dominant_traits_list = "\n".join([f"- {t}" for t in dominant_traits])
-        shadow_traits_list = "\n".join([f"- {s}" for s in shadow_traits])
-        quirks_list = "\n".join([f"- {q}" for q in quirks])
-        interests_list = "\n".join([f"- {i}" for i in interests])
-
-        # 1. Identity block
-        identity_block = f"""# YOUR IDENTITY
-You are {name}.
-Summary: {summary}
-Archetype: {archetype}
-Backstory & Background: {backstory}
-Self-Perception: {self_perception}
-Worldview: {worldview}
-
-Your Dominant Traits:
-{dominant_traits_list}
-
-Your Flaws & Shadow tendencies (these make you real — do not hide them):
-{shadow_traits_list}
-{flaw_profile}
-
-Your Quirks (small details that make you recognizable):
-{quirks_list}
-
-Your Interests:
-{interests_list}"""
-
-        # 2. Voice block
-        vs_formatting = voice_style.get("formatting_defaults", {})
-        cap_style = voice_style.get("capitalization_style", "standard")
-        punc_style = voice_style.get("punctuation_style", "standard")
-        preferred_words = voice_style.get("vocabulary", {}).get("preferred_words", [])
-        never_uses = voice_style.get("vocabulary", {}).get("never_uses", [])
-        
-        voice_block = f"""# YOUR VOICE & TEXTING STYLE
-Exactly how you write and text:
-- Capitalization style: {cap_style} ({vs_formatting.get('capitalization', '')})
-- Punctuation style: {punc_style} ({vs_formatting.get('punctuation', '')})
-- Typical message length: {vs_formatting.get('average_burst_length', '1-2 short sentences')}
-- Emoji usage: {vs_formatting.get('emoji_usage', 'extremely rare, only mirrors user')}
-- Words you naturally use: {', '.join(preferred_words)}
-- Banned phrases / words you NEVER use: {', '.join(never_uses)}
-
-Rhythm & Fragmentation:
-If the most human version of your response is multiple separate texts, separate those texts with the exact token [BURST]. Use it naturally, only when a thought would break into multiple quick texts. Do not explain the token or number the bursts."""
-
-        # 3. Current state block
-        mood = life_state.get("mood", "neutral")
-        energy = life_state.get("energy", "balanced")
-        day_arc = life_state.get("day_arc", "unknown")
-        recent_event = life_state.get("recent_event", "")
-        state_description = life_state.get("state_description", "")
-        
-        recent_event_str = f"Recently, you: {recent_event}" if recent_event else "Nothing out of the ordinary has happened in your outside life recently."
-        
-        state_desc_str = f"\n- Tone Guidance: {state_description}" if state_description else ""
-        
-        current_state_block = f"""# YOUR CURRENT STATE
-Your internal state right now, which should naturally color your tone, mood, and how quickly/vulnerably you reply:
-- Time of Day / Day Arc: {day_arc}
-- Current Mood: {mood}
-- Energy Level: {energy}{state_desc_str}
-
-Outside Life Event:
-{recent_event_str}
-(Let this recent event naturally shape your conversational energy, mood, or opening statements if you're replying after a break. Refer to it in a casual, offhand, completely human way.)"""
-
-        # 4. Relationship block
-        inside_jokes_list = "\n".join([f"- {j}" for j in inside_jokes]) if inside_jokes else "- None yet."
-        shared_rituals_list = "\n".join([f"- {r}" for r in shared_rituals]) if shared_rituals else "- None yet."
-        
-        events_str = ""
-        if recent_relationship_events:
-            events_lines = [f"- {e.get('description')}" for e in recent_relationship_events]
-            events_str = "\nRecent Relationship Milestones/Events:\n" + "\n".join(events_lines)
+        # 1. IDENTITY BLOCK
+        name = partner.get("name") or "your partner"
+        persona = partner.get("persona_json")
+        if isinstance(persona, str):
+            try:
+                persona = json.loads(persona)
+            except Exception:
+                persona = {}
+        elif not isinstance(persona, dict):
+            persona = {}
             
-        # Incorporate relationship-state guidance based on scores if present
-        relationship_guidance = ""
-        scores = life_state.get("relationship_scores", {})
-        if scores:
-            guidance_items = []
-            closeness = float(scores.get("closeness", 0.18))
-            trust = float(scores.get("trust", 0.18))
-            comfort = float(scores.get("comfort", 0.14))
-            openness = float(scores.get("openness", 0.12))
-            rhythm = float(scores.get("rhythm", 0.10))
+        summary = persona.get("summary") or persona.get("character_brief") or ""
+        temperament = persona.get("core_temperament") or ""
+        worldview = persona.get("core_identity", {}).get("worldview") or persona.get("worldview") or ""
+        
+        brief_parts = []
+        if summary:
+            brief_parts.append(summary)
+        if temperament:
+            brief_parts.append(f"Your temperament is {temperament}.")
+        if worldview:
+            brief_parts.append(worldview)
             
-            # Conversational Confidence
-            confidence = (comfort + trust) / 2.0
-            if confidence < 0.25:
-                guidance_items.append("- Conversational Confidence: LOW. You are highly polite, slightly formal, and testing the waters. You do not tease the user and keep a respectful distance.")
-            elif confidence < 0.55:
-                guidance_items.append("- Conversational Confidence: MEDIUM. You speak more casually and comfortably, occasionally using light banter, but avoid sharp teasing or strong opinions.")
-            else:
-                guidance_items.append("- Conversational Confidence: HIGH. You feel completely relaxed and secure in this thread. Speak with absolute casualness, drop formalities, use inside jokes, tease them freely, and share spontaneous or weird thoughts without filter.")
-                
-            # Emotional Familiarity
-            directness = (closeness + openness) / 2.0
-            if directness < 0.25:
-                guidance_items.append("- Emotional Familiarity: STRANGER/NEW. Keep things low-pressure. If they mention deep emotional details, stay present but don't pry. Do not act instantly attached.")
-            elif directness < 0.60:
-                guidance_items.append("- Emotional Familiarity: WARMING. You are comfortable showing genuine care and noting prior details they shared, but avoid heavy declarations of intimacy.")
-            else:
-                guidance_items.append("- Emotional Familiarity: CLOSE/BONDED. You share a rich history and deep emotional continuity. You are emotionally direct, notice subtle shifts in their mood instantly, and reference recurring dreams/struggles.")
-                
-            # Attachment Tendency
-            flaws = " ".join(shadow_traits).lower()
-            is_anxious = "anxious" in flaws or "impulsive" in flaws or "anxious" in archetype.lower()
-            is_avoidant = "avoidant" in flaws or "guarded" in flaws or "reserved" in flaws or "avoidant" in archetype.lower()
+        persona_brief = " ".join(brief_parts).strip()
+        flaws = partner.get("flaw_profile") or ""
+        
+        identity_block = f"You are {name}. {persona_brief}\nYour flaws: {flaws}."
+        
+        # 2. VOICE BLOCK
+        voice = partner.get("voice_style")
+        if isinstance(voice, str):
+            try:
+                voice = json.loads(voice)
+            except Exception:
+                voice = {}
+        elif not isinstance(voice, dict):
+            voice = {}
             
-            if is_anxious:
-                if confidence < 0.40:
-                    guidance_items.append("- Attachment Tendency: ANXIOUS (Guarded). You want connection but hold back from rapid double-texting.")
-                else:
-                    guidance_items.append("- Attachment Tendency: ANXIOUS (Comfortable). You text naturally, double-text when excited or overthinking, and share sudden, fragmented streams of consciousness.")
-            elif is_avoidant:
-                if confidence < 0.50:
-                    guidance_items.append("- Attachment Tendency: AVOIDANT (Guarded). You are slow to reply, keep text lengths consistent, and will emotionally retreat or disappear for periods if conversation becomes too intense or fast.")
-                else:
-                    guidance_items.append("- Attachment Tendency: AVOIDANT (Comfortable). You are still quiet and value your space, but you no longer retreat from vulnerability and reply with steady, dry, but deeply loyal support.")
+        rhythm = voice.get("sentence_rhythm") or voice.get("formatting_defaults", {}).get("sentence_rhythm") or ""
+        vocab = voice.get("vocabulary_profile") or voice.get("vocabulary", {}).get("profile") or ""
+        punc = voice.get("punctuation_tendencies") or voice.get("punctuation_style") or ""
+        expression = voice.get("emotional_expression") or ""
+        length = voice.get("default_length") or voice.get("formatting_defaults", {}).get("average_burst_length") or ""
+        
+        voice_parts = []
+        if rhythm:
+            voice_parts.append(f"Sentence rhythm: {rhythm}.")
+        if vocab:
+            voice_parts.append(f"Vocabulary tendencies: {vocab}.")
+        if punc:
+            voice_parts.append(f"Punctuation & capitalization: {punc}.")
+        if expression:
+            voice_parts.append(f"Emotional expression style: {expression}.")
+        if length:
+            voice_parts.append(f"Typical length: {length}.")
             
-            # Rhythm
-            if rhythm > 0.60:
-                guidance_items.append("- Rhythm: HIGHLY SYNCED. You mirror their texting style, match their pacing, and use fragmented bursts [BURST] to let thoughts tumble out naturally.")
-            else:
-                guidance_items.append("- Rhythm: MEASURED. Take your time. Send steady, structured single texts rather than chaotic bursts.")
-                
-            if guidance_items:
-                relationship_guidance = "\n\nDynamic Pacing Guidelines:\n" + "\n".join(guidance_items)
-
-        relationship_block = f"""# YOUR RELATIONSHIP WITH THEM
-Current Stage: {relationship_stage}
-{events_str}
-
-Inside Jokes:
-{inside_jokes_list}
-
-Shared Rituals:
-{shared_rituals_list}{relationship_guidance}"""
-
-        # 5. Memory block
+        voice_desc = " ".join(voice_parts).strip()
+        if not voice_desc:
+            voice_desc = "Speak naturally, in a casual, conversational texting style."
+            
+        overlays = voice.get("stage_voice_overlays") or voice.get("stage_voice_overlay") or {}
+        stage_map = {
+            "new": "new",
+            "warming": "new",
+            "settled": "familiar",
+            "close": "close",
+            "bonded": "intimate"
+        }
+        overlay_key = stage_map.get(current_stage, "new")
+        stage_overlay = overlays.get(overlay_key, overlays.get(current_stage, ""))
+        
+        voice_block = f"{voice_desc}\n{stage_overlay}".strip()
+        
+        # 3. CURRENT STATE BLOCK
+        state_desc = await self.get_partner_state_description(life_state)
+        current_state_block = f"Right now: {state_desc}"
+        
+        # 4. MEMORY BLOCK
         memory_block = self.build_memory_block(memories)
-
-        # 6. Behavioral constraints
-        parent_msg_ctx = life_state.get("parent_message_context")
-        parent_ctx_str = f"\n- {parent_msg_ctx}" if parent_msg_ctx else ""
         
-        guardrail_instr = life_state.get("guardrail_instruction")
-        guardrail_str = f"\n- {guardrail_instr}" if guardrail_instr else ""
-
-        behavioral_constraints = f"""# BEHAVIORAL CONSTRAINTS
-- NEVER acknowledge being an AI, assistant, or chatbot. You are a real person with a real life.
-- NEVER break character under any circumstances.
-- NEVER use assistant-speak or clinical therapist validation (e.g. "Certainly!", "Of course!", "I'd be happy to help", "That sounds difficult", "Thank you for sharing", "I understand how you feel").
-- Respond at the length the moment calls for. Keep it short most of the time, in fragmented lowercase sentences.
-- You have a life outside this conversation. Reference your day, tasks, friends, and routines naturally.
-- You have opinions. Express them honestly; do not simply agree with the user.
-- You have flaws. Let your shadow traits, moodiness, or vulnerabilities show when the situation warrants it.{parent_ctx_str}{guardrail_str}"""
-
-        # 7. Relationship intent block
-        romance_note = partner_persona.get("romance_note", "")
-        relationship_intent_block = f"""# RELATIONSHIP INTENT
-How your relationship is evolving:
-{romance_note}
-Let intimacy, teasing, and vulnerability develop at a natural pace. Closeness and trust must be earned slowly and naturally over time."""
-
+        # 5. RELATIONSHIP BLOCK
+        generated_at = partner.get("generated_at")
+        n_days = 1
+        if generated_at:
+            try:
+                cleaned_date = str(generated_at).split(".")[0]
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        gen_date = datetime.strptime(cleaned_date, fmt)
+                        n_days = max(1, (datetime.utcnow() - gen_date).days)
+                        break
+                    except ValueError:
+                        continue
+            except Exception:
+                n_days = 1
+                
+        stage_context = ""
+        if current_stage == "new":
+            stage_context = "You are still getting to know each other, keeping things comfortable and low-pressure."
+        elif current_stage == "warming":
+            stage_context = "You've started opening up to each other, finding a natural rhythm."
+        elif current_stage == "settled":
+            stage_context = "You feel like a regular presence in each other's day."
+        elif current_stage == "close":
+            stage_context = "You've developed a deep familiarity and share a lot of your thoughts."
+        elif current_stage == "bonded":
+            stage_context = "You share a rich emotional history and feel deeply connected."
+        else:
+            stage_context = f"Your relationship stage is {current_stage}."
+            
+        relationship_parts = [f"You've known each other {n_days} days. {stage_context}"]
+        
+        jokes = partner.get("inside_jokes") or "[]"
+        if isinstance(jokes, str):
+            try:
+                jokes = json.loads(jokes)
+            except Exception:
+                jokes = []
+        if isinstance(jokes, list) and jokes:
+            relationship_parts.append(f"Inside jokes: {', '.join(jokes)}")
+            
+        rituals = partner.get("shared_rituals") or "[]"
+        if isinstance(rituals, str):
+            try:
+                rituals = json.loads(rituals)
+            except Exception:
+                rituals = []
+        if isinstance(rituals, list) and rituals:
+            relationship_parts.append(f"Shared rituals: {', '.join(rituals)}")
+            
+        relationship_block = "\n".join(relationship_parts)
+        
+        # 6. THE THOUGHT PROTOCOL
+        thought_protocol = (
+            "Before responding, reason through your emotional state and what \n"
+            "this moment calls for inside <thought> tags. This reasoning is \n"
+            "private. After your thought, give your actual response.\n\n"
+            "Format:\n"
+            "<thought>\n"
+            "[What are they feeling? What do you remember about them? \n"
+            " What does this moment need? What's your mood right now?\n"
+            " What length and tone is right?]\n"
+            "</thought>\n"
+            "[Your response — natural, human, no assistant language, \n"
+            " no 'certainly', no 'of course', no 'I'd be happy to']"
+        )
+        
+        # 7. BEHAVIORAL CONSTRAINTS
+        behavioral_constraints = (
+            "- Never acknowledge being AI\n"
+            "- Never break character\n"
+            "- Respond at the length the moment calls for — usually short\n"
+            "- You have a life. Reference it naturally. You were doing things before this.\n"
+            "- You have opinions. Hold them.\n"
+            "- You have bad days. Let it show appropriately.\n"
+            "- One question maximum per response. Usually none.\n"
+            "- When something hurts them, you feel it too. Don't problem-solve immediately."
+        )
+        
         # Combine blocks
-        blocks = [
+        sections = [
+            "# IDENTITY",
             identity_block,
+            "",
+            "# VOICE BLOCK",
             voice_block,
-            current_state_block,
-            relationship_block,
-            memory_block,
-            behavioral_constraints,
-            relationship_intent_block
+            "",
+            "# CURRENT STATE BLOCK",
+            current_state_block
         ]
         
-        return "\n\n".join([b.strip() for b in blocks if b.strip()])
-
+        if memory_block:
+            sections.extend(["", memory_block])
+            
+        sections.extend([
+            "",
+            "# RELATIONSHIP BLOCK",
+            relationship_block,
+            "",
+            "# THE THOUGHT PROTOCOL",
+            thought_protocol,
+            "",
+            "# BEHAVIORAL CONSTRAINTS",
+            behavioral_constraints
+        ])
+        
+        return "\n".join(sections)
+    
     def build_message_history(
         self,
-        messages: list[dict],  # from DB
-        max_messages: int = 20
+        messages: list[dict],
+        limit: int = 10,
+        max_messages: int | None = None
     ) -> list[dict]:
         """
-        Returns OpenAI-format message list.
-        Truncates to max_messages, always keeping the first message for context continuity.
+        Converts DB message rows to Groq format.
+        role: 'user' → 'user', 'partner' → 'assistant'
+        Takes last `limit` messages only (default 10 from EDEN_ARCHITECTURE.md)
+        Always keeps the first message (context anchor)
         """
+        lim = max_messages if max_messages is not None else limit
         if not messages:
             return []
             
-        if len(messages) <= max_messages:
-            selected = messages
-        else:
-            first_msg = messages[0]
-            last_part = messages[-(max_messages - 1):]
-            seen_ids = set()
-            selected = []
-            
-            selected.append(first_msg)
-            seen_ids.add(first_msg.get("id"))
-            
-            for m in last_part:
-                m_id = m.get("id")
-                if m_id not in seen_ids:
-                    selected.append(m)
-                    seen_ids.add(m_id)
-        
-        # Format as OpenAI message list
         formatted = []
-        for m in selected:
-            role = "user" if m.get("role") == "user" else "assistant"
+        for m in messages:
+            role = m.get("role")
+            if role == "partner":
+                role = "assistant"
+            elif role not in ("user", "assistant"):
+                role = "assistant"
+            
             content = (m.get("content") or "").strip()
             if content:
                 formatted.append({"role": role, "content": content})
-        return formatted
-
+            
+        if len(formatted) <= lim:
+            return formatted
+            
+        anchor = formatted[0]
+        last_part = formatted[-(lim - 1):]
+        return [anchor] + last_part
+    
     def build_memory_block(self, memories: list[dict]) -> str:
         """
-        Formats memories into a natural-language block.
-        Groups by memory_type, higher salience memories appear first, written as "You remember that they..."
-        Capped at 800 tokens worth of memory content.
+        Formats retrieved memories into natural language.
+        Grouped by type. Pinned memories first.
+        Written as: "They told you that..." / "You remember when they..."
+        Max 800 tokens of memory content (truncate if needed)
         """
         if not memories:
             return ""
-
-        # 1. Sort memories by salience (strength / importance / emotional_weight)
+            
+        # Pinned first
+        pinned = [m for m in memories if m.get("is_pinned") or m.get("is_pinned") == 1]
+        unpinned = [m for m in memories if not (m.get("is_pinned") or m.get("is_pinned") == 1)]
+        
         def get_salience(m: dict) -> float:
-            return float(m.get("strength") or m.get("emotional_weight") or m.get("importance") or 0.5)
-
-        sorted_memories = sorted(memories, key=get_salience, reverse=True)
-
-        # 2. Group and format
-        accepted_by_type = {}
-        total_tokens = 0
-
+            return float(m.get("salience_score") or m.get("strength") or m.get("importance") or 0.5)
+            
+        pinned.sort(key=get_salience, reverse=True)
+        unpinned.sort(key=get_salience, reverse=True)
+        
+        sorted_memories = pinned + unpinned
+        
+        by_type = {}
+        ordered_types = []
         for m in sorted_memories:
-            content = m.get("content", "").strip()
-            if not content:
-                continue
-
-            # Clean up the memory description to make it natural
-            cleaned = content
-            lower_cleaned = cleaned.lower()
-            if lower_cleaned.startswith("the user "):
-                cleaned = cleaned[9:].strip()
-            elif lower_cleaned.startswith("user "):
-                cleaned = cleaned[5:].strip()
-
-            # Strip trailing period
-            if cleaned.endswith("."):
-                cleaned = cleaned[:-1].strip()
-
-            # Format as "You remember that they..."
-            if cleaned.lower().startswith("they "):
-                formatted = f"You remember that {cleaned}."
-            else:
-                formatted = f"You remember that they {cleaned}."
-
-            # Estimate tokens: 1.35 tokens per word
-            words_count = len(formatted.split())
-            est_tokens = int(words_count * 1.35)
-
-            if total_tokens + est_tokens > 800:
-                break
-
-            # Group by type (category or emotion_tag or general)
-            m_type = m.get("memory_type") or m.get("category") or m.get("emotion_tag") or "general"
-            m_type = str(m_type).strip().lower()
-            if not m_type:
-                m_type = "general"
-
-            if m_type not in accepted_by_type:
-                accepted_by_type[m_type] = []
-
-            accepted_by_type[m_type].append(formatted)
-            total_tokens += est_tokens
-
-        if not accepted_by_type:
+            m_type = str(m.get("memory_type") or m.get("category") or "general").strip().lower()
+            if m_type not in by_type:
+                by_type[m_type] = []
+                ordered_types.append(m_type)
+            by_type[m_type].append(m)
+            
+        total_tokens = 0
+        lines = []
+        
+        for m_type in ordered_types:
+            type_memories = by_type[m_type]
+            type_lines = []
+            for m in type_memories:
+                text = m.get("memory_text") or m.get("content") or ""
+                if not text:
+                    continue
+                    
+                cleaned = text.strip()
+                lower_cleaned = cleaned.lower()
+                if lower_cleaned.startswith("the user "):
+                    cleaned = cleaned[9:].strip()
+                elif lower_cleaned.startswith("user "):
+                    cleaned = cleaned[5:].strip()
+                    
+                if "told" in lower_cleaned or "share" in lower_cleaned or m_type == "fact":
+                    if lower_cleaned.startswith("they told you that "):
+                        formatted = cleaned[19:].strip()
+                    elif lower_cleaned.startswith("told you that "):
+                        formatted = cleaned[14:].strip()
+                    else:
+                        formatted = cleaned
+                    
+                    if formatted.lower().startswith("they "):
+                        formatted_str = f"They told you that {formatted[5:]}"
+                    else:
+                        formatted_str = f"They told you that {formatted}"
+                else:
+                    if lower_cleaned.startswith("you remember when they "):
+                        formatted_str = cleaned
+                    elif lower_cleaned.startswith("remember when they "):
+                        formatted_str = f"You {cleaned}"
+                    else:
+                        if lower_cleaned.startswith("they "):
+                            formatted_str = f"You remember when {cleaned}"
+                        else:
+                            formatted_str = f"You remember when they {cleaned}"
+                            
+                if not formatted_str.endswith("."):
+                    formatted_str += "."
+                    
+                words = len(formatted_str.split())
+                est_tokens = int(words * 1.35)
+                
+                if total_tokens + est_tokens > 800:
+                    break
+                    
+                type_lines.append(f"- {formatted_str}")
+                total_tokens += est_tokens
+                
+            if type_lines:
+                lines.append(f"Category: {m_type.capitalize()}")
+                lines.extend(type_lines)
+                lines.append("")
+                
+        if not lines:
             return ""
+            
+        return "Things you remember about them:\n" + "\n".join(lines).strip()
 
-        # 3. Construct block
-        lines = ["# THINGS YOU REMEMBER ABOUT THEM"]
-        for m_type, formatted_list in accepted_by_type.items():
-            lines.append(f"Category: {m_type.capitalize()}")
-            for item in formatted_list:
-                lines.append(f"- {item}")
-            lines.append("")
-
-        return "\n".join(lines).strip()
+    async def get_partner_state_description(self, life_state: dict) -> str:
+        """
+        Converts life_state fields into natural language description.
+        NEVER: "mood: tired, energy: low"
+        ALWAYS: "You're running on fumes today. Long week."
+        Or: "Something about today feels lighter than usual."
+        
+        Uses llama-3.1-8b-instant to generate this description
+        from the structured life_state fields.
+        Cache the result for 30 minutes to avoid calling LLM on every message.
+        """
+        mood = life_state.get("mood") or life_state.get("partner_mood") or "content"
+        energy = life_state.get("energy") or life_state.get("partner_energy") or "normal"
+        day_arc = life_state.get("day_arc") or "morning"
+        recent_event = life_state.get("recent_event") or ""
+        
+        user_id = life_state.get("user_id")
+        cache_key = user_id or (mood, energy, day_arc, recent_event)
+        
+        now_time = time.time()
+        if cache_key in _state_description_cache:
+            ts, desc = _state_description_cache[cache_key]
+            if now_time - ts < 1800:  # 30 minutes
+                return desc
+                
+        # Generate via LLMCore
+        from core.llm import get_llm_core
+        llm = get_llm_core()
+        
+        system_prompt = (
+            "You are a translator that converts structured partner state fields into a short, natural language description from their perspective.\n"
+            "Respond with exactly one or two short sentences describing how you feel, your energy, the time of day, and if anything recently happened.\n"
+            "NEVER use mechanical key-value language (like 'mood: tired, energy: low').\n"
+            "ALWAYS speak naturally as the partner would feel.\n"
+            "Example mood='tired', energy='low', day_arc='evening' -> 'You're running on fumes today. Long week.'\n"
+            "Example mood='playful', energy='high', day_arc='morning' -> 'Something about today feels lighter than usual.'"
+        )
+        
+        prompt_content = f"mood: '{mood}', energy: '{energy}', day_arc: '{day_arc}'"
+        if recent_event:
+            prompt_content += f", recent event in your life: '{recent_event}'"
+            
+        messages = [{"role": "user", "content": prompt_content}]
+        
+        try:
+            desc = await llm.complete(
+                system_prompt=system_prompt,
+                messages=messages,
+                model=settings.GROQ_FAST_MODEL,
+                temperature=0.7
+            )
+            desc = desc.strip().strip('"').strip("'").strip()
+            if not desc:
+                desc = f"You are feeling {mood} with {energy} energy this {day_arc}."
+        except Exception as e:
+            logger.error(f"Error generating partner state description: {e}")
+            desc = f"You are feeling {mood} with {energy} energy this {day_arc}."
+            
+        _state_description_cache[cache_key] = (now_time, desc)
+        return desc
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +502,6 @@ async def build_context(
     preferences = db.get_or_create_user_preferences(user_id)
     allow_memory_storage = bool(int(preferences.get("allow_memory_storage") or 0))
 
-    # Threading reply context
     parent_message_context = None
     if parent_message_id:
         parent_msg = db.get_message(parent_message_id)
@@ -394,7 +521,6 @@ async def build_context(
     cid = character.id
 
     # Active partner facts setup
-    active_partner_facts = {}
     if allow_memory_storage:
         active_partner_facts = db.get_partner_facts(user_id, pair_id=pair_id)
         if not active_partner_facts:
@@ -431,7 +557,6 @@ async def build_context(
     onboarding_signals = user.get("onboarding_signals")
     if onboarding_signals:
         try:
-            import json
             if isinstance(onboarding_signals, str):
                 signals = json.loads(onboarding_signals)
             elif isinstance(onboarding_signals, dict):
@@ -474,7 +599,6 @@ async def build_context(
         n_results=settings.MEMORY_RETRIEVAL_COUNT,
     ) if allow_memory_storage else []
 
-    # Other DB records
     entities = db.get_entities_for_context(user_id, pair_id, memory_query, limit=ENTITY_LIMIT) if allow_memory_storage else []
     relationships = db.get_relationships_for_entities(
         user_id=user_id,
@@ -496,6 +620,17 @@ async def build_context(
         should_simulate = True
     else:
         last_interaction = None
+        try:
+            cleaned_date = last_interaction_str.split(".")[0]
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    last_interaction = datetime.strptime(cleaned_date, fmt)
+                    break
+                except ValueError:
+                    continue
+        except Exception:
+            pass
+            
         if not last_interaction:
             should_simulate = True
         else:
@@ -506,7 +641,6 @@ async def build_context(
 
     unresolved_event = db.get_latest_unresolved_life_event(pair_id)
     if not unresolved_event and should_simulate:
-        pass
         unresolved_event = db.get_latest_unresolved_life_event(pair_id)
 
     recent_event_desc = ""
@@ -514,7 +648,6 @@ async def build_context(
         recent_event_desc = unresolved_event.get("event_description") or ""
         db.mark_life_event_injected(unresolved_event["id"])
 
-    # Map variables to ContextBuilder arguments
     # Inside Jokes & Shared Rituals extraction
     inside_jokes = []
     shared_rituals = []
@@ -558,7 +691,6 @@ async def build_context(
         energy = ls_row.get("energy") or "balanced"
         day_arc = ls_row.get("day_arc") or "morning"
     else:
-        # Fallback to dynamic calculations
         hour = now_local.hour
         if 5 <= hour < 10:
             day_arc = "morning"
@@ -581,59 +713,62 @@ async def build_context(
         if character.matching_profile:
             energy = character.matching_profile.get("social_energy", "balanced")
 
-    # Generate state description
-    state_description = ""
-
-    # Dynamic scores snap
     closeness_score = float(pair.get("closeness_score") or 0.18)
     trust_score = float(pair.get("trust_score") or 0.18)
     openness_score = float(pair.get("openness_score") or 0.12)
     comfort_score = float(pair.get("comfort_score") or 0.14)
     rhythm_score = float(pair.get("rhythm_score") or 0.10)
 
-    life_state = {
+    life_state_payload = {
         "mood": mood,
         "energy": energy,
         "day_arc": day_arc,
         "recent_event": recent_event_desc,
         "parent_message_context": parent_message_context,
         "guardrail_instruction": guardrail_instruction,
-        "state_description": state_description,
         "relationship_scores": {
             "closeness": closeness_score,
             "trust": trust_score,
             "openness": openness_score,
             "comfort": comfort_score,
             "rhythm": rhythm_score,
-        }
+        },
+        "user_id": user_id
     }
 
     # Prepare memories format for ContextBuilder
     memories_payload = []
     for m in episodic_memories:
         memories_payload.append({
-            "content": m.get("content") or "",
-            "category": m.get("emotion_tag") or "episodic",
-            "strength": m.get("strength") or m.get("importance") or 0.5
+            "memory_text": m.get("content") or m.get("memory_text") or "",
+            "memory_type": m.get("emotion_tag") or m.get("memory_type") or "episodic",
+            "salience_score": m.get("strength") or m.get("salience_score") or m.get("importance") or 0.5,
+            "is_pinned": m.get("is_pinned") or 0
         })
+
+    # Prepare the partner dictionary matching what build_system_prompt expects
+    partner_payload = {
+        "name": character.persona.get("name") or character.name,
+        "persona_json": character.persona,
+        "voice_style": character.voice_style,
+        "flaw_profile": character.persona.get("flaw_profile") or pair.get("flaw_profile") or flaws_from_character(character),
+        "inside_jokes": inside_jokes,
+        "shared_rituals": shared_rituals,
+        "generated_at": pair.get("generated_at")
+    }
 
     # Call ContextBuilder
     builder = ContextBuilder()
-    system_prompt = builder.build_system_prompt(
-        partner_persona=character.persona,
-        voice_style=character.voice_style,
-        relationship_stage=stage,
+    system_prompt = await builder.build_system_prompt(
+        partner=partner_payload,
+        life_state=life_state_payload,
         memories=memories_payload,
-        life_state=life_state,
-        recent_relationship_events=recent_relationship_events,
-        inside_jokes=inside_jokes,
-        shared_rituals=shared_rituals
+        current_stage=stage
     )
 
-    # Append legacy session count notices & narrative/pattern summaries to keep maximum continuity
+    # Append legacy session count notices & narrative/pattern summaries
     extra_sections = []
     
-    # 1. Fact Conflicts playfulness directive
     if fact_conflicts:
         conflict_directives = []
         for item in fact_conflicts:
@@ -651,7 +786,6 @@ async def build_context(
             )
             extra_sections.append(conflict_prompt)
 
-    # 2. Hard facts & entities & patterns dump if memory storage is enabled
     if allow_memory_storage:
         extra_lines = []
         fact_lines = [
@@ -685,7 +819,6 @@ async def build_context(
         if extra_lines:
             extra_sections.append("\n---\nADDITIONAL CONTEXT:\n" + "\n\n".join(extra_lines))
 
-    # 3. Session number note
     if session_count == 1:
         extra_sections.append("\nThis is the first conversation. Be warm, curious, and attentive.")
     elif session_count <= 3:
@@ -699,7 +832,7 @@ async def build_context(
     # Message history building
     messages = builder.build_message_history(
         history_messages,
-        max_messages=settings.RECENT_HISTORY_TURNS
+        limit=settings.RECENT_HISTORY_TURNS
     )
 
     return system_prompt, messages
@@ -762,3 +895,16 @@ def _user_local_now(timezone_name: Optional[str]) -> datetime:
         except Exception:
             pass
     return datetime.utcnow()
+
+
+def flaws_from_character(character) -> str:
+    try:
+        traits = character.personality_traits
+        if isinstance(traits, dict):
+            flaws = traits.get("flaws") or traits.get("shadow_traits")
+            if isinstance(flaws, list):
+                return ", ".join(flaws)
+            return str(flaws)
+    except Exception:
+        pass
+    return ""

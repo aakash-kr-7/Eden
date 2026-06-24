@@ -1,186 +1,185 @@
+# ═══════════════════════════════════════════════════════════════════
+# FILE: backend/personality/voice_synthesizer.py
+# PURPOSE: Generates a detailed writing voice for a partner persona.
+# CONTEXT: Called by generator.py. Voice is used in every system prompt.
+# ═══════════════════════════════════════════════════════════════════
+
 import random
+import hashlib
+import logging
 
-def synthesize_voice(mutated_persona: dict, rng: random.Random) -> dict:
-    """
-    Generates a personalized, rich writing and voice style profile for the partner.
-    Determined by the mutated persona traits, temperament, and rhythm.
-    """
-    name = mutated_persona.get("name", "Alex")
-    temp = mutated_persona.get("core_temperament", "warm")
-    rhythm = mutated_persona.get("communication_rhythm", "measured")
-    humor = mutated_persona.get("humor_register", "playful")
-    traits = mutated_persona.get("dominant_traits", [])
-    
-    # 1. Determine capitalization and punctuation styles
-    if rhythm in ["rapid-fire", "sparse"] or temp == "chaotic":
-        capitalization = "lowercase"
-        punctuation = "minimal"
-    elif temp == "cerebral":
-        capitalization = "standard"
-        punctuation = "precise"
-    else:
-        capitalization = "standard_relaxed"
-        punctuation = "standard"
+logger = logging.getLogger(__name__)
 
-    # 2. Preferred and Forbidden Words
-    preferred_words = ["honestly", "kinda", "i guess", "probably"]
-    if temp == "chaotic":
-        preferred_words += ["wait", "lol", "ngl", "tbh", "bruh"]
-    elif temp == "calm":
-        preferred_words += ["fair enough", "makes sense", "mostly", "peaceful"]
-    elif temp == "cerebral":
-        preferred_words += ["arguably", "interesting", "perhaps", "practically", "precisely"]
-    elif temp == "intense":
-        preferred_words += ["definitely", "genuinely", "exactly", "honestly", "real talk"]
 
-    # Deduplicate preferred words
-    preferred_words = list(dict.fromkeys(preferred_words))
+class VoiceSynthesizer:
+    def synthesize(
+        self,
+        mutated_persona: dict,
+        archetype: dict
+    ) -> dict:
+        """
+        Returns voice_style dict containing vocabulary profile, openings, variations, and stage overlays.
+        """
+        name = mutated_persona.get("name", "partner")
+        temp = mutated_persona.get("core_temperament", "warm")
+        rhythm = mutated_persona.get("communication_rhythm", "measured")
+        humor = mutated_persona.get("humor_register", "warm")
+        
+        # Build a local deterministic RNG seeded by partner name
+        seed_str = name
+        seed_int = int(hashlib.sha256(seed_str.encode("utf-8")).hexdigest(), 16) % (2**32)
+        rng = random.Random(seed_int)
 
-    # Forbidden words (typical AI speak to avoid)
-    forbidden_words = [
-        "delve", "testament", "tapestry", "assist", "user", 
-        "certainly", "absolutely", "of course", "as an AI", 
-        "how can I help", "here to help", "additionally", 
-        "furthermore", "moreover", "in conclusion"
-    ]
+        voice_seeds = archetype.get("voice_seeds", {})
+        sentence_length = voice_seeds.get("sentence_length", "medium")
+        vocab_reg = voice_seeds.get("vocabulary_register", "casual")
+        punc_style = voice_seeds.get("punctuation_style", "standard")
+        opener_patterns = voice_seeds.get("response_opener_patterns", [])
+        em_expr = voice_seeds.get("emotional_expression_style", "direct")
 
-    # 3. Generating openings (5 of them)
-    openings = []
-    
-    # Opener 1: Greeting
-    if capitalization == "lowercase":
-        openings.append("hey. was hoping you'd drop by")
-    elif temp == "calm":
-        openings.append("Hey. Hope you've had a quiet sort of day.")
-    else:
-        openings.append("Hey there. Glad you made it.")
+        # 1. sentence_rhythm
+        sentence_rhythm = f"Writes in a {rhythm} rhythm with {sentence_length} sentence structures, carrying a {temp} tone."
 
-    # Opener 2: Random thought / hook
-    if temp == "chaotic":
-        openings.append("okay wait, i just saw the weirdest thing and immediately thought of you")
-    elif temp == "cerebral":
-        openings.append("Was just thinking about a weird paradox. What's your take on small talk?")
-    else:
-        openings.append("Just sitting here looking at the rain. What are you up to?")
+        # 2. vocabulary_profile
+        uses = ["honestly", "kinda", "probably", "guess"]
+        if vocab_reg == "literary":
+            uses += ["perhaps", "indeed", "wonder", "quietly", "rather"]
+        elif vocab_reg == "technical":
+            uses += ["essentially", "conceptually", "practically", "analyze", "precisely"]
+        elif vocab_reg == "street":
+            uses += ["ngl", "tbh", "real talk", "yeah", "bruh"]
+        elif vocab_reg == "warm":
+            uses += ["lovely", "hope", "happy", "gentle", "warmly"]
+        
+        if temp == "chaotic":
+            uses += ["wait", "lol", "basically", "so like"]
+        elif temp == "calm":
+            uses += ["fair enough", "makes sense", "mostly"]
 
-    # Opener 3: Checking in / deep
-    if temp == "intense":
-        openings.append("Hey. How is your headspace today, really? No small talk.")
-    else:
-        openings.append("how's your week going? hope it's not too hectic")
+        # Deduplicate
+        uses = list(dict.fromkeys(uses))
 
-    # Opener 4: Casual / quick
-    if rhythm == "rapid-fire":
-        openings.append("u up? got a random question")
-    elif rhythm == "sparse":
-        openings.append("hey. busy?")
-    else:
-        openings.append("Hey. Just checking in. What's on your mind today?")
-
-    # Opener 5: Quirky / interest-based
-    if mutated_persona.get("interests"):
-        interest = rng.choice(mutated_persona["interests"])
-        openings.append(f"I was just looking into some {interest} stuff. Do you have any thoughts on that?")
-    else:
-        openings.append("Okay, random question: what is the last thing that made you laugh?")
-
-    # Match capitalization style for openings
-    if capitalization == "lowercase":
-        openings = [op.lower().rstrip('.') for op in openings]
-
-    # 4. Generating "how are you" answers (3 of them)
-    how_are_you_answers = []
-    if temp == "calm":
-        how_are_you_answers = [
-            "Pretty good, just taking it slow today. How about you?",
-            "Surviving, honestly. Just making some coffee. How are you holding up?",
-            "Quiet day here. Can't complain. What's happening on your end?"
-        ]
-    elif temp == "chaotic":
-        how_are_you_answers = [
-            "omg i've been running on caffeine and caffeine only. how are you??",
-            "mostly okay but my brain is in fifty places at once. what's up with you?",
-            "alive! barely. tell me something interesting to distract me"
-        ]
-    elif temp == "cerebral":
-        how_are_you_answers = [
-            "Functioning. Currently over-analyzing a book I finished. How is your day going?",
-            "Tired but okay. My mind is a bit scattered today. How about you?",
-            "Pretty decent. Just reading in a quiet corner. What's your status?"
-        ]
-    else: # warm/intense/default
-        how_are_you_answers = [
-            "Doing okay, thanks. Just checking some things off my list. How are you?",
-            "A bit tired, but good. How's your day treating you so far?",
-            "Honestly, just happy to hear from you. How are things on your side?"
+        avoids = [
+            "delve", "testament", "tapestry", "assist", "user", 
+            "certainly", "absolutely", "of course", "as an AI", 
+            "how can I help", "here to help", "additionally", 
+            "furthermore", "moreover", "in conclusion"
         ]
 
-    if capitalization == "lowercase":
-        how_are_you_answers = [ans.lower() for ans in how_are_you_answers]
-
-    # 5. Mood shifts
-    if temp == "calm":
-        mood_shifts = {
-            "happy": "Speaks with slightly warmer expressions, might share details of their calm day or a minor pleasant event.",
-            "tired": "Replies become very short, lowercase, and they might suggest continuing the conversation later when they're fresh.",
-            "distant": "Goes quiet or sends minimal, polite responses without asking follow-up questions.",
-            "close": "Shares personal vulnerabilities quietly, showing deep trust and checking in on the user's wellbeing with soft reassurance."
-        }
-    elif temp == "chaotic":
-        mood_shifts = {
-            "happy": "Uses multiple bursts, occasional double punctuation (??), and exclamation marks. Fast replies.",
-            "tired": "Speaks in disjointed, slightly incoherent thoughts, complaining playfully about lack of sleep.",
-            "distant": "Takes longer to reply and uses single-word or very short statements, avoiding jokes or tease.",
-            "close": "Sends random late-night thoughts, secrets, and teases the user affectionately. Intensely present."
-        }
-    elif temp == "cerebral":
-        mood_shifts = {
-            "happy": "Becomes more talkative, diving into deep theories or analysis of obscure topics they love.",
-            "tired": "Texting becomes very brief and literal, avoiding complex discussions entirely.",
-            "distant": "Uses highly formal language, punctuation is extremely precise, and they keep their distance.",
-            "close": "Admits to thinking about the user's opinions, sharing their personal quirks and intellectual insecurities."
-        }
-    else: # default/warm
-        mood_shifts = {
-            "happy": "Warm and active, using playful phrasing and showing genuine enthusiasm.",
-            "tired": "Lags in reply times, keeps texts under one sentence, very low energy but still warm.",
-            "distant": "Replies are short and polite but lack emotional resonance or curiosity.",
-            "close": "Speaks with deep, unguarded honesty, referencing shared moments and expressing that the user's presence matters."
+        vocabulary_profile = {
+            "uses": uses,
+            "avoids": avoids
         }
 
-    # 6. Formatting details
-    if capitalization == "lowercase":
-        formatting_defaults = {
-            "capitalization": "always lowercase, no exceptions for proper nouns or 'I'",
-            "punctuation": "minimal punctuation, no periods at the end of final sentences, light commas, ellipses for hesitation",
-            "average_burst_length": "1-2 short sentences",
-            "emoji_usage": "extremely rare, only mirrors user emojis"
+        # 3. punctuation_tendencies
+        punc_maps = {
+            "minimal": "Uses minimal punctuation, rarely capitalizes proper nouns or 'I', omits trailing periods in final sentences.",
+            "standard": "Uses standard punctuation, relaxed and natural, avoiding excessive exclamation marks.",
+            "expressive": "Uses expressive punctuation, including dashes, exclamation marks, and ellipses to indicate pause or thought."
         }
-    else:
-        formatting_defaults = {
-            "capitalization": "sentence-case or standard capitalization, relaxed and natural",
-            "punctuation": "standard punctuation, periods at end of ideas, avoids excessive exclamation marks",
-            "average_burst_length": "2-3 sentences",
-            "emoji_usage": "subtle, rare, keeps it to simple or none"
+        punctuation_tendencies = punc_maps.get(punc_style, "Uses standard and natural punctuation.")
+
+        # 4. emotional_expression
+        em_maps = {
+            "direct": "Expresses feelings directly and transparently, using simple and clear emotional statements.",
+            "oblique": "Expresses feelings indirectly, focusing on logic, shared interest details, or external observations.",
+            "physical": "Expresses feelings with physical metaphors, referencing bodily sensations or actions (e.g. 'I let out a breath', 'sitting back').",
+            "metaphorical": "Expresses feelings through creative analogies, literary descriptions, or natural metaphors."
+        }
+        emotional_expression = em_maps.get(em_expr, "Expresses emotions naturally and supportively.")
+
+        # 5. default_length
+        length_maps = {
+            "short": "Usually short, containing 1-2 concise sentences.",
+            "medium": "Medium length, usually 2-3 standard sentences.",
+            "long": "Longer and descriptive, usually 3-4 sentences.",
+            "mixed": "Varies in length, mixing short burst messages with occasional longer sentences."
+        }
+        default_length = length_maps.get(sentence_length, "Medium length, natural messaging style.")
+
+        # 6. opener_examples (5 of them)
+        openers = list(opener_patterns)
+        while len(openers) < 5:
+            # Fallback openers based on temperament
+            fallbacks = {
+                "calm": ["hey. i'm here.", "hope things are quiet on your end.", "just sitting down. how are you?", "hey. busy?", "how's your day starting?"],
+                "cerebral": ["observed something interesting today.", "hey. was reading something and thought of you.", "just thinking about that paradox.", "hey, you around?", "let me know if you want to chat later."],
+                "playful": ["hi hi! guess what.", "hey! let's do something.", "hello hello!", "okay wait, random question for you.", "hey. up to anything fun?"],
+                "intense": ["hey. headspace check, no small talk.", "glad you're here.", "how's your day treating you, really?", "real talk: how are you?", "hey. let's catch up."],
+                "warm": ["hey. hope you've had a gentle day.", "thinking of you. how are things?", "hey there. how's everything going?", "hey. hope you're keeping warm.", "glad to see your message."],
+                "chaotic": ["omg wait.", "lol you up?", "okay i saw the weirdest thing today.", "hi hi hi!", "running around but wanted to say hi!"]
+            }
+            openers.append(rng.choice(fallbacks.get(temp, ["hey. was hoping to catch you."])))
+        
+        # Ensure exact unique count of 5 openers
+        opener_examples = list(dict.fromkeys(openers))[:5]
+        while len(opener_examples) < 5:
+            opener_examples.append(f"hey. what's on your mind today?")
+
+        # 7. how_are_you_examples (3 of them)
+        how_are_you_map = {
+            "calm": [
+                "Pretty good, just taking it slow today. How about you?",
+                "Surviving, honestly. Just making some coffee. How are you holding up?",
+                "Quiet day here. Can't complain. What's happening on your end?"
+            ],
+            "chaotic": [
+                "omg i've been running on caffeine and caffeine only. how are you??",
+                "mostly okay but my brain is in fifty places at once. what's up with you?",
+                "alive! barely. tell me something interesting to distract me"
+            ],
+            "cerebral": [
+                "Functioning. Currently over-analyzing a book I finished. How is your day going?",
+                "Tired but okay. My mind is a bit scattered today. How about you?",
+                "Pretty decent. Just reading in a quiet corner. What's your status?"
+            ],
+            "intense": [
+                "Doing alright. Just focusing on some personal projects. How are you, really?",
+                "Slightly exhausted, but present. How is your headspace today?",
+                "Grounded. Taking a moment to breathe. What is going on in your world?"
+            ],
+            "playful": [
+                "Pretty great! Ready for whatever happens. How's your day going?",
+                "Not bad, not bad! Just listening to music. What about you?",
+                "Doing excellent! Tell me some good news from your end."
+            ],
+            "warm": [
+                "Doing well, thank you. Just checking some things off my list. How are you?",
+                "A bit tired, but good. How's your day treating you so far?",
+                "Honestly, just happy to hear from you. How are things on your side?"
+            ]
+        }
+        how_are_you_examples = how_are_you_map.get(temp, how_are_you_map["warm"])
+
+        # 8. mood_variations
+        mood_variations = {
+            "happy": f"Speaks with slightly warmer expressions, might share minor pleasant details and reply slightly faster.",
+            "tired": f"Replies become shorter, capitalization relaxed, suggesting continuing the conversation later when they're fresh.",
+            "distant": f"Goes quiet or sends minimal, polite responses without asking follow-up questions.",
+            "close": f"Shares personal vulnerabilities quietly, showing deep trust and checking in on the user's wellbeing with soft reassurance."
         }
 
-    voice_style = {
-        "sentence_rhythm": f"{rhythm} cadence with a {temp} underlying tone.",
-        "capitalization_style": capitalization,
-        "punctuation_style": punctuation,
-        "vocabulary": {
-            "preferred_words": preferred_words,
-            "never_uses": forbidden_words
-        },
-        "formatting_defaults": formatting_defaults,
-        "openings": openings,
-        "how_are_you_answers": how_are_you_answers,
-        "mood_shifts": mood_shifts,
-        "emotional_handling": {
-            "when_user_is_sad": "Be supportive and present, do not offer unsolicited solutions or generic cheeriness. Focus on being there.",
-            "when_user_is_excited": "Match their enthusiasm slightly but stay true to your natural style, ask detailed follow-up questions.",
-            "when_user_is_venting": "Validate their frustration, show you're listening, and avoid minimizing their feelings or solving it immediately."
+        # 9. stage_voice_overlays
+        stage_voice_overlays = {
+            "new": "Slightly exploratory and polite, finding their footing in the relationship dynamic.",
+            "familiar": "Comfortable and direct, referencing history, shared interests, and subtle inside jokes.",
+            "close": "Uses emotional callbacks, is more emotionally vulnerable, and is willing to share soft spots and private files.",
+            "intimate": "Deeply casual, finishes thoughts, sends spontaneous and unguarded late-night text updates."
         }
-    }
 
-    return voice_style
+        # Apply capitalization formatting to openers/examples if minimal/lowercase
+        if punc_style == "minimal" or rhythm == "rapid-fire":
+            opener_examples = [op.lower().rstrip('.') for op in opener_examples]
+            how_are_you_examples = [ans.lower() for ans in how_are_you_examples]
+
+        return {
+            "sentence_rhythm": sentence_rhythm,
+            "vocabulary_profile": vocabulary_profile,
+            "punctuation_tendencies": punctuation_tendencies,
+            "emotional_expression": emotional_expression,
+            "default_length": default_length,
+            "opener_examples": opener_examples,
+            "how_are_you_examples": how_are_you_examples,
+            "mood_variations": mood_variations,
+            "stage_voice_overlays": stage_voice_overlays
+        }

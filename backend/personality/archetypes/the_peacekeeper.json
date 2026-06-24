@@ -1,9 +1,9 @@
 {
   "archetype_id": "the_peacekeeper",
   "base_name_pool": [
+    "Reese",
     "Gabriel",
-    "Naomi",
-    "Owen"
+    "Naomi"
   ],
   "core_temperament": "calm",
   "dominant_traits": [

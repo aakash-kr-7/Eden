@@ -1,9 +1,9 @@
 {
   "archetype_id": "the_philosopher",
   "base_name_pool": [
+    "Sage",
     "Gideon",
-    "Beatrice",
-    "Alice"
+    "Beatrice"
   ],
   "core_temperament": "cerebral",
   "dominant_traits": [

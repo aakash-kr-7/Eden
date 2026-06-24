@@ -1,9 +1,9 @@
 {
   "archetype_id": "the_free_spirit",
   "base_name_pool": [
-    "Leo",
-    "Chloe",
-    "Roxie"
+    "Alex",
+    "Roxie",
+    "Chloe"
   ],
   "core_temperament": "chaotic",
   "dominant_traits": [

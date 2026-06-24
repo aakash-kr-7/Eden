@@ -1,9 +1,9 @@
 {
   "archetype_id": "the_pragmatist",
   "base_name_pool": [
+    "Emery",
     "Marcus",
-    "Diana",
-    "Zara"
+    "Diana"
   ],
   "core_temperament": "intense",
   "dominant_traits": [

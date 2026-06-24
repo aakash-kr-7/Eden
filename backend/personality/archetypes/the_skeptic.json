@@ -1,8 +1,8 @@
 {
   "archetype_id": "the_skeptic",
   "base_name_pool": [
+    "Charlie",
     "Damian",
-    "Vance",
     "Fiona"
   ],
   "core_temperament": "intense",

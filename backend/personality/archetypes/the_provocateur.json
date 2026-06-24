@@ -1,8 +1,8 @@
 {
   "archetype_id": "the_provocateur",
   "base_name_pool": [
+    "Parker",
     "Jasper",
-    "Vivienne",
     "Maeve"
   ],
   "core_temperament": "chaotic",
