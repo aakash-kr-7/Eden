@@ -8,7 +8,7 @@ from config import settings
 router = APIRouter(prefix="/proactive")
 
 from memory.store import db
-ProactiveEngine = None
+from engine.proactive_engine import ProactiveEngine
 
 
 def _require_ops_access(x_admin_token: Optional[str] = Header(default=None)) -> None:
@@ -86,11 +86,8 @@ async def trigger_proactive(
     """Admin-only endpoint to manually trigger evaluation for a user."""
     _require_ops_access(x_admin_token)
 
-    if not ProactiveEngine:
-        return {"status": "success"}
-
     target_user_id = user_id or identity.uid
     engine = ProactiveEngine()
-    await engine.evaluate(target_user_id, force=True)
+    await engine.evaluate(db, target_user_id, force=True)
 
     return {"status": "success"}

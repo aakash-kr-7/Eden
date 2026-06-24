@@ -160,33 +160,18 @@ Generate a brief summary (1-2 sentences) and determine the dominant emotional to
         blueprint["emotional_trajectory"].append(emotional_tone)
         blueprint["emotional_trajectory"] = blueprint["emotional_trajectory"][-10:]
         
-        # Check stage advancement
-        conv_count = db.execute("SELECT COUNT(*) FROM conversations WHERE user_id = ? AND processed = 1", (user_id,)).fetchone()[0]
-        memory_count = db.execute("SELECT COUNT(*) FROM episodic_memories WHERE user_id = ?", (user_id,)).fetchone()[0]
-        
-        current_stage = partner_row["relationship_stage"] or "new"
-        next_stage = current_stage
-        
-        # Progression rules:
-        # new -> familiar: 10 convs + 20 memories
-        # familiar -> close: 30 convs + 50 memories
-        # close -> intimate: 70 convs + 100 memories
-        if conv_count >= 70 and memory_count >= 100:
-            next_stage = "intimate"
-        elif conv_count >= 30 and memory_count >= 50:
-            next_stage = "close"
-        elif conv_count >= 10 and memory_count >= 20:
-            next_stage = "familiar"
-            
-        # Save partner updates
+        # Save partner updates (blueprint and inside jokes)
         db.execute("""
             UPDATE partners
             SET blueprint_json = ?,
-                inside_jokes = ?,
-                relationship_stage = ?,
-                last_evolved_at = ?
+                inside_jokes = ?
             WHERE user_id = ?
-        """, (json.dumps(blueprint), json.dumps(inside_jokes), next_stage, datetime.now(timezone.utc).isoformat(), user_id))
+        """, (json.dumps(blueprint), json.dumps(inside_jokes), user_id))
+
+        # Check stage advancement via RelationshipEngine
+        from engine.relationship_engine import RelationshipEngine
+        rel_engine = RelationshipEngine()
+        await rel_engine.evaluate_progression(db, user_id)
         
         # 8. Prune messages: keep last 50 per user
         db.execute("""

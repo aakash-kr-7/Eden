@@ -70,15 +70,39 @@ app.include_router(ops_router, prefix="/api")
 async def health():
     return {"status": "ok", "version": "2.0.0", "environment": settings.ENVIRONMENT}
 
-# Scheduler jobs (placeholder functions to run until underlying logic is implemented)
+# Scheduler jobs (connected to actual simulation and proactive outreach logic)
 def life_simulator_tick():
     logger.info("Executing scheduled job: life_simulator_tick")
+    import asyncio
+    from engine.life_simulator import LifeSimulator
+    from memory.store import db
+    try:
+        simulator = LifeSimulator()
+        asyncio.run(simulator.run_for_all_active(db))
+    except Exception as e:
+        logger.error(f"Error in life_simulator_tick scheduled job: {e}", exc_info=True)
 
 def proactive_evaluate():
     logger.info("Executing scheduled job: proactive_evaluate")
+    import asyncio
+    from engine.proactive_engine import ProactiveEngine
+    from memory.store import db
+    try:
+        engine = ProactiveEngine()
+        asyncio.run(engine.evaluate_all(db))
+    except Exception as e:
+        logger.error(f"Error in proactive_evaluate scheduled job: {e}", exc_info=True)
 
 def proactive_deliver():
     logger.info("Executing scheduled job: proactive_deliver")
+    import asyncio
+    from engine.proactive_engine import ProactiveEngine
+    from memory.store import db
+    try:
+        engine = ProactiveEngine()
+        asyncio.run(engine.deliver_pending(db))
+    except Exception as e:
+        logger.error(f"Error in proactive_deliver scheduled job: {e}", exc_info=True)
 
 def dream_loop_check():
     logger.info("Executing scheduled job: dream_loop_check")

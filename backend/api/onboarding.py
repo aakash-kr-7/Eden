@@ -1,94 +1,114 @@
+# ═══════════════════════════════════════════════════════════════════
+# FILE: api/onboarding.py
+# PURPOSE: 9-step onboarding flow — collects user profile, generates partner.
+# CONTEXT: Only runs once per user. Partner is permanent after completion.
+# ═══════════════════════════════════════════════════════════════════
+
 import logging
 import json
 from typing import Optional, Union, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth.firebase import AuthenticatedIdentity, get_authenticated_identity
+from config import settings
 from personality.generator import PersonalityGenerator
 from core.context_builder import build_context
 from core.llm import get_llm_core, _clean_response
+from memory.store import db, MemoryStore
+from personality.registry import get_partner_instance, resolve_or_assign_primary_pair
+from engine.life_simulator import LifeSimulator
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/onboarding")
 
-from memory.store import db, MemoryStore
-from personality.registry import get_partner_instance, resolve_or_assign_primary_pair
-
 memory_store = MemoryStore()
-clear_cache = None
-plan_burst_response = None
-on_message_saved = None
-on_session_started = None
-
 
 # ---------------------------------------------------------------------------
-# Structured Steps Config
+# Question Configuration
 # ---------------------------------------------------------------------------
-ONBOARDING_STEPS = {
-    0: {
-        "key": "preferred_name",
+ONBOARDING_STEPS = [
+    {
+        "step": 0,
         "question": "What should I call you?",
-        "type": "open",
-        "options": []
+        "type": "open_text",
+        "options": None,
+        "optional": False,
+        "key": "preferred_name"
     },
-    1: {
-        "key": "opening_feel",
-        "question": "What made you come here today?",
-        "type": "open",
-        "options": []
+    {
+        "step": 1,
+        "question": "What brought you here today?",
+        "type": "open_text",
+        "options": None,
+        "optional": False,
+        "key": "opening_feel"
     },
-    2: {
-        "key": "connection_style",
-        "question": "When you really connect with someone — what does that feel like for you?",
-        "type": "open",
-        "options": []
+    {
+        "step": 2,
+        "question": "When you really connect with someone — what does it feel like?",
+        "type": "open_text",
+        "options": None,
+        "optional": False,
+        "key": "connection_style"
     },
-    3: {
-        "key": "communication_pace",
-        "question": "Do you tend to have long deep conversations or quick check-ins? Or something in between?",
+    {
+        "step": 3,
+        "question": "How do you prefer to talk?",
         "type": "multiple_choice",
-        "options": ["long and deep", "quick and light", "it depends"]
+        "options": ["Long deep conversations", "Quick check-ins", "Somewhere in between"],
+        "optional": False,
+        "key": "communication_pace"
     },
-    4: {
-        "key": "emotional_depth_preference",
-        "question": "How much do you usually share with people you're close to?",
+    {
+        "step": 4,
+        "question": "How much do you usually open up to people you're close to?",
         "type": "multiple_choice",
-        "options": ["a lot — I go deep", "some things — when it feels right", "not much — I'm more private"]
+        "options": ["A lot — I go deep", "Some things, when it feels right", "Not much — I'm more private"],
+        "optional": False,
+        "key": "emotional_depth_preference"
     },
-    5: {
-        "key": "humor_style",
-        "question": "What kind of humor lands for you?",
+    {
+        "step": 5,
+        "question": "What kind of humor actually gets you?",
         "type": "multiple_choice",
-        "options": ["dry and deadpan", "warm and silly", "dark and honest", "I'm not really a humor person"]
+        "options": ["Dry and deadpan", "Warm and silly", "Dark and honest", "I'm not really a humor person"],
+        "optional": False,
+        "key": "humor_style"
     },
-    6: {
-        "key": "relationship_type_intent",
-        "question": "What kind of connection are you hoping for here?",
+    {
+        "step": 6,
+        "question": "What are you hoping to find here?",
         "type": "multiple_choice",
-        "options": ["someone to talk to", "a real friendship", "something that might become more", "I'm not sure yet"]
+        "options": ["Someone to talk to", "A real friendship", "Something that might become more", "I'm not sure yet"],
+        "optional": False,
+        "key": "relationship_type_intent"
     },
-    7: {
-        "key": "something_real",
-        "question": "Tell me one thing about yourself that you don't usually lead with.",
-        "type": "open",
-        "options": []
+    {
+        "step": 7,
+        "question": "Tell me one thing about yourself you don't usually lead with.",
+        "type": "open_text",
+        "options": None,
+        "optional": False,
+        "key": "something_real"
     },
-    8: {
-        "key": "one_last_thing",
+    {
+        "step": 8,
         "question": "Is there anything you'd want someone to know before getting to know you?",
-        "type": "open",
-        "options": []
+        "type": "open_text",
+        "options": None,
+        "optional": True,
+        "key": "one_last_thing"
     }
-}
+]
 
 
 class RespondRequest(BaseModel):
     step: int
-    response: Union[str, dict, Any]
+    response: Union[str, list, Any]
 
 
 @router.get("/status")
@@ -101,19 +121,17 @@ async def get_onboarding_status(
     if not user:
         return {
             "complete": False,
-            "current_step": None,
+            "current_step": 0,
             "partner_ready": False
         }
 
-    # Fetch partner state
     partner = db.get_partner(user_id) if db else None
     partner_ready = partner is not None
 
-    complete = bool(user.get("onboarding_completed", 0))
+    complete = bool(user.get("onboarding_completed", 0) or user.get("onboarding_complete", 0))
 
-    # Fetch current session step
     session = db.get_onboarding_session(user_id) if db else None
-    current_step = session["current_step"] if session else None
+    current_step = session["current_step"] if session else (8 if complete else 0)
 
     return {
         "complete": complete,
@@ -126,7 +144,7 @@ async def get_onboarding_status(
 async def start_onboarding(
     identity: AuthenticatedIdentity = Depends(get_authenticated_identity),
 ):
-    """Initializes onboarding session, idempotent."""
+    """Initializes onboarding session and returns first question."""
     user_id = identity.uid
     if db:
         db.get_or_create_user(user_id)
@@ -138,7 +156,6 @@ async def start_onboarding(
         session = None
 
     step = session["current_step"] if session else 0
-    # If the user somehow completed all questions but hasn't run complete, limit step to 8
     if step >= len(ONBOARDING_STEPS):
         step = len(ONBOARDING_STEPS) - 1
 
@@ -147,7 +164,8 @@ async def start_onboarding(
         "step": step,
         "question": step_info["question"],
         "type": step_info["type"],
-        "options": step_info["options"]
+        "options": step_info["options"],
+        "optional": step_info["optional"]
     }
 
 
@@ -166,34 +184,41 @@ async def respond_onboarding(
     if payload.step != current_step:
         raise HTTPException(status_code=400, detail=f"Step mismatch. Expected step {current_step}, got {payload.step}.")
 
-    if current_step not in ONBOARDING_STEPS:
+    if current_step >= len(ONBOARDING_STEPS):
         raise HTTPException(status_code=400, detail="Onboarding questions already completed. Call /complete.")
 
     step_info = ONBOARDING_STEPS[current_step]
     key = step_info["key"]
 
-    # Extract response string
-    if isinstance(payload.response, dict):
-        response_str = payload.response.get("value") or payload.response.get("text") or str(payload.response)
-    else:
-        response_str = str(payload.response).strip()
+    response_val = payload.response
+    if isinstance(response_val, str):
+        response_val = response_val.strip()
 
     # Validate multiple choice response
     if step_info["type"] == "multiple_choice":
-        if response_str not in step_info["options"]:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid response choice. Options are: {', '.join(step_info['options'])}"
-            )
+        if isinstance(response_val, list):
+            for choice in response_val:
+                if choice not in step_info["options"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid response choice. Options are: {', '.join(step_info['options'])}"
+                    )
+        else:
+            if response_val not in step_info["options"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid response choice. Options are: {', '.join(step_info['options'])}"
+                )
 
     # Validate open response (Step 0 to 7 must have non-empty text; step 8 is optional)
-    if step_info["type"] == "open" and current_step != 8:
-        if not response_str:
+    if not step_info["optional"] and step_info["type"] == "open_text":
+        if not response_val:
             raise HTTPException(status_code=400, detail="Response cannot be empty.")
 
-    # Save to responses JSON blob
     responses = session["responses"]
-    responses[key] = response_str
+    if not isinstance(responses, dict):
+        responses = {}
+    responses[key] = response_val
 
     next_step = current_step + 1
     if db:
@@ -202,20 +227,22 @@ async def respond_onboarding(
     # Return next question or completion signal
     if next_step >= len(ONBOARDING_STEPS):
         return {
-            "step": next_step,
-            "complete": True,
+            "next_step": next_step,
             "question": None,
-            "type": None,
-            "options": None
+            "is_complete": True
         }
 
     next_step_info = ONBOARDING_STEPS[next_step]
     return {
-        "step": next_step,
-        "complete": False,
-        "question": next_step_info["question"],
-        "type": next_step_info["type"],
-        "options": next_step_info["options"]
+        "next_step": next_step,
+        "question": {
+            "step": next_step_info["step"],
+            "question": next_step_info["question"],
+            "type": next_step_info["type"],
+            "options": next_step_info["options"],
+            "optional": next_step_info["optional"]
+        },
+        "is_complete": False
     }
 
 
@@ -240,11 +267,19 @@ async def complete_onboarding(
     something_real = onboarding_data.get("something_real")
     one_last_thing = onboarding_data.get("one_last_thing")
 
+    # Validate that steps 0 to 7 are present
+    for step_cfg in ONBOARDING_STEPS:
+        if not step_cfg["optional"] and not onboarding_data.get(step_cfg["key"]):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing response for required question: {step_cfg['question']}"
+            )
+
     try:
-        # 1. Run partner generation (calls PersonalityGenerator)
+        # 1. Run partner generation
         partner_data = await PersonalityGenerator.generate(onboarding_data, user_id)
 
-        # 2. Database update transaction
+        # 2. Save signals, partner details and mark onboarding complete in DB
         if db:
             with db.transaction():
                 db.get_or_create_user(user_id)
@@ -257,7 +292,7 @@ async def complete_onboarding(
                     onboarding_completed=1
                 )
 
-                # Save partner record
+                # Save partner record (also updates relationship pair & registers life state)
                 db.save_partner(
                     user_id=user_id,
                     partner_id=partner_data["id"],
@@ -267,28 +302,83 @@ async def complete_onboarding(
                     voice_style_json=partner_data["voice_style_json"],
                 )
 
-                # Clear cache to reflect new partner registration
-                if clear_cache:
-                    clear_cache(user_id)
-
                 # Resolve relationship pair
-                pair = resolve_or_assign_primary_pair(user_id) if resolve_or_assign_primary_pair else {"id": "dummy", "partner_id": partner_data["id"]}
-
-                # Apply communication pace cadence
+                pair = resolve_or_assign_primary_pair(user_id)
+                
+                # Apply proactive cadence cadence (gentle/balanced/frequent)
                 cadence_map = {
-                    "long and deep": "gentle",
-                    "quick and light": "frequent",
-                    "it depends": "balanced"
+                    "Long deep conversations": "gentle",
+                    "Quick check-ins": "frequent",
+                    "Somewhere in between": "balanced"
                 }
                 cadence = cadence_map.get(onboarding_data.get("communication_pace", ""), "balanced")
                 db.update_pair_proactive_settings(pair["id"], proactive_cadence=cadence)
 
-        # 3. Store onboarding facts as pinned memories (Stubs)
-        pass
+        # 3. Initialize life state with defaults
+        simulator = LifeSimulator()
+        await simulator.initialize(db, user_id)
 
-        # 4. Generate first message using full context pipeline (Stubs)
-        organic_opening_line = "hey. you actually showed up."
+        # 4. Create 2 pinned memories from step 7 and step 8 answers
+        with db.get_connection() as conn:
+            if something_real:
+                memory_store.add(
+                    db=conn,
+                    user_id=user_id,
+                    memory_text=something_real,
+                    memory_type="onboarding",
+                    salience_score=0.9,
+                    emotional_valence="neutral",
+                    source_conversation_id="",
+                    is_pinned=True
+                )
+            if one_last_thing:
+                memory_store.add(
+                    db=conn,
+                    user_id=user_id,
+                    memory_text=one_last_thing,
+                    memory_type="onboarding",
+                    salience_score=0.9,
+                    emotional_valence="neutral",
+                    source_conversation_id="",
+                    is_pinned=True
+                )
+
+        # 5. Create conversation and generate first partner message using full ContextBuilder pipeline
+        partner_id = partner_data["id"]
         partner_name = partner_data["name"]
+        pair_id = pair["id"]
+        conversation_id = db.create_conversation(user_id=user_id, pair_id=pair_id, partner_id=partner_id)
+
+        system_prompt, messages = await build_context(
+            user_id=user_id,
+            pair_id=pair_id,
+            current_message="",
+            conversation_id=conversation_id,
+            partner_id=partner_id
+        )
+
+        # Append a greeting trigger message if messages is empty
+        if not messages:
+            messages = [{"role": "user", "content": "Write your very first text message to greet the user."}]
+
+        llm = get_llm_core()
+        first_message_raw = await llm.complete(
+            system_prompt=system_prompt,
+            messages=messages,
+            model=settings.GROQ_CHAT_MODEL,
+            temperature=0.7
+        )
+        first_message = _clean_response(first_message_raw)
+
+        # Save opening message to DB
+        db.save_message(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            pair_id=pair_id,
+            partner_id=partner_id,
+            role="partner",
+            content=first_message
+        )
 
         # Clean up temporary onboarding session
         if db:
@@ -296,7 +386,8 @@ async def complete_onboarding(
 
         return {
             "partner_name": partner_name,
-            "first_message": organic_opening_line
+            "first_message": first_message,
+            "conversation_id": conversation_id
         }
 
     except Exception as e:
