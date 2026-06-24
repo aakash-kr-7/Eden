@@ -15,7 +15,7 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool isUser = message.role == 'user';
+    final bool isUser = message.isUser;
     final String formattedTime = DateFormat('jm').format(message.sentAt);
 
     if (!isUser) {

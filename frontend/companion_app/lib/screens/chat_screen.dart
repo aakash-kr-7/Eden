@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -194,10 +195,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
         // Merge proactive messages inline in the conversation with their original timestamps
         final List<Message> mergedMessages = List.from(fetchedMessages);
         for (var pm in session.pendingProactive) {
-          if (!mergedMessages.any((m) => m.id == pm.id)) {
+          final pmId = int.tryParse(pm.id) ?? pm.id.hashCode;
+          if (!mergedMessages.any((m) => m.id == pmId)) {
             mergedMessages.add(Message(
-              id: pm.id,
-              role: 'assistant',
+              id: pmId,
+              role: MessageRole.partner,
               content: pm.message,
               sentAt: pm.sentAt,
             ));
@@ -244,11 +246,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       if (proactive.isNotEmpty && mounted) {
         final convState = ref.read(conversationProvider);
         for (var pm in proactive) {
-          if (!convState.messages.any((m) => m.id == pm.id)) {
+          final pmId = int.tryParse(pm.id) ?? pm.id.hashCode;
+          if (!convState.messages.any((m) => m.id == pmId)) {
             ref.read(conversationProvider.notifier).addMessage(
               Message(
-                id: pm.id,
-                role: 'assistant',
+                id: pmId,
+                role: MessageRole.partner,
                 content: pm.message,
                 sentAt: pm.sentAt,
               ),
@@ -303,8 +306,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     HapticFeedback.lightImpact();
 
     final userMessage = Message(
-      id: UniqueKey().toString(),
-      role: 'user',
+      id: DateTime.now().millisecondsSinceEpoch,
+      role: MessageRole.user,
       content: text,
       sentAt: DateTime.now(),
     );
@@ -325,50 +328,72 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       // 2. Show typing indicator
       ref.read(typingProvider.notifier).state = true;
 
-      // 3. Call api.sendMessage()
-      final response = await apiService.sendMessage(convState.conversationId, text);
-      
-      if (response.conversationId.isNotEmpty && convState.conversationId == null) {
-        ref.read(conversationProvider.notifier).setConversationId(response.conversationId);
+      // 3. Call api.sendMessage() and process stream
+      final stream = apiService.sendMessage(convState.conversationId, text);
+      String fullText = '';
+      Map<String, dynamic>? donePayload;
+
+      await for (final data in stream) {
+        try {
+          final jsonMap = jsonDecode(data) as Map<String, dynamic>;
+          final type = jsonMap['type'] as String?;
+          if (type == 'token') {
+            final token = jsonMap['text'] as String? ?? '';
+            fullText += token;
+          } else if (type == 'done') {
+            donePayload = jsonMap;
+          }
+        } catch (e) {
+          debugPrint('Error parsing stream data: $e');
+        }
       }
 
-      // 4. If burst response, display them with natural delays
-      final bursts = response.bursts;
-      if (bursts.isNotEmpty) {
-        final messages = bursts.map((b) => b.text).toList();
-        final delays = bursts.map((b) => b.preBurstDelayMs / 1000.0).toList();
+      if (donePayload != null) {
+        final convId = donePayload['conversation_id']?.toString();
+        if (convId != null && convId.isNotEmpty && convState.conversationId == null) {
+          ref.read(conversationProvider.notifier).setConversationId(convId);
+        }
 
-        final burstService = ref.read(burstPlaybackServiceProvider);
-        await burstService.playBurst(
-          messages,
-          delays,
-          (msgText) {
-            // Display one by one
-            final partnerMessage = Message(
-              id: UniqueKey().toString(),
-              role: 'assistant',
-              content: msgText,
-              sentAt: DateTime.now(),
-            );
-            ref.read(conversationProvider.notifier).addMessage(partnerMessage);
-            _scrollToBottom();
-          },
-          (isTyping) {
-            // Typing indicator shows between each burst message
-            ref.read(typingProvider.notifier).state = isTyping;
-          },
-        );
+        final burstsData = donePayload['bursts'] as List<dynamic>?;
+        final delaysData = donePayload['delays'] as List<dynamic>?;
+
+        if (burstsData != null && burstsData.isNotEmpty) {
+          final messages = burstsData.map((e) => e.toString()).toList();
+          final delays = delaysData != null
+              ? delaysData.map((e) => (e as num).toDouble()).toList()
+              : List.generate(messages.length, (_) => 1.0);
+
+          final burstService = ref.read(burstPlaybackServiceProvider);
+          await burstService.playBurst(
+            messages,
+            delays,
+            (msgText) {
+              final partnerMessage = Message(
+                id: DateTime.now().millisecondsSinceEpoch,
+                role: MessageRole.partner,
+                content: msgText,
+                sentAt: DateTime.now(),
+              );
+              ref.read(conversationProvider.notifier).addMessage(partnerMessage);
+              _scrollToBottom();
+            },
+            (isTyping) {
+              ref.read(typingProvider.notifier).state = isTyping;
+            },
+          );
+        } else {
+          ref.read(typingProvider.notifier).state = false;
+          final partnerMessage = Message(
+            id: DateTime.now().millisecondsSinceEpoch,
+            role: MessageRole.partner,
+            content: donePayload['full_text'] as String? ?? fullText,
+            sentAt: DateTime.now(),
+          );
+          ref.read(conversationProvider.notifier).addMessage(partnerMessage);
+          _scrollToBottom();
+        }
       } else {
-        // Fallback for single reply message
         ref.read(typingProvider.notifier).state = false;
-        final partnerMessage = Message(
-          id: UniqueKey().toString(),
-          role: 'assistant',
-          content: response.reply,
-          sentAt: DateTime.now(),
-        );
-        ref.read(conversationProvider.notifier).addMessage(partnerMessage);
-        _scrollToBottom();
       }
     } catch (e) {
       debugPrint("Error sending message: $e");

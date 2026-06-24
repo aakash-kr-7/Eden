@@ -1,370 +1,435 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: services/api_service.dart
+// PURPOSE: All HTTP communication with Eden backend. Auth token injected automatically.
+// CONTEXT: Used by all Riverpod providers to fetch data from FastAPI.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'dart:async';
 import 'dart:convert';
-
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import '../models/models.dart';
 import 'auth_service.dart';
 
-class ApiConfig {
-  static const String _baseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://localhost:8000',
-  );
-
-  static String get baseUrl {
-    final raw = _baseUrl.trim();
-    if (raw.startsWith('http://') || raw.startsWith('https://')) {
-      return raw;
-    }
-    return 'http://$raw';
-  }
-}
+const String kBaseUrl = String.fromEnvironment(
+  'API_BASE_URL',
+  defaultValue: 'http://localhost:8000',
+);
 
 class ApiService {
   final AuthService _authService;
-  final String _baseUrl;
+  final Dio _dio;
 
-  ApiService(this._authService, {String? baseUrl}) 
-      : _baseUrl = baseUrl ?? ApiConfig.baseUrl;
-
-  // --- Exponential Backoff Retry for 5xx Server Errors ---
-  Future<http.Response> _requestWithRetry(
-    String method,
-    String path, {
-    Map<String, dynamic>? body,
-  }) async {
-    final uri = Uri.parse('$_baseUrl$path');
-    final token = await _authService.getIdToken();
-    final headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
-
-    int attempt = 0;
-    while (true) {
-      try {
-        http.Response response;
-        if (method == 'POST') {
-          response = await http.post(uri, headers: headers, body: body != null ? jsonEncode(body) : null);
-        } else if (method == 'GET') {
-          response = await http.get(uri, headers: headers);
-        } else if (method == 'PATCH') {
-          response = await http.patch(uri, headers: headers, body: body != null ? jsonEncode(body) : null);
-        } else if (method == 'DELETE') {
-          response = await http.delete(uri, headers: headers);
-        } else {
-          throw UnsupportedError('Unsupported HTTP method $method');
-        }
-
-        if (response.statusCode >= 500 && response.statusCode < 600) {
-          if (attempt < 3) {
-            attempt++;
-            final backoffMs = 1000 * (1 << attempt);
-            await Future.delayed(Duration(milliseconds: backoffMs));
-            continue;
+  ApiService(this._authService, {String? baseUrl})
+      : _dio = Dio(BaseOptions(baseUrl: baseUrl ?? kBaseUrl)) {
+    // 1. Interceptor: Auto-inject Firebase ID token
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) async {
+          try {
+            final token = await _authService.getCurrentIdToken();
+            if (token != null && token.isNotEmpty) {
+              options.headers['Authorization'] = 'Bearer $token';
+            }
+          } catch (e) {
+            debugPrint('Error injecting Auth Token: $e');
           }
-        }
-        return response;
-      } catch (e) {
-        if (attempt < 3) {
-          attempt++;
-          final backoffMs = 1000 * (1 << attempt);
-          await Future.delayed(Duration(milliseconds: backoffMs));
-          continue;
-        }
-        rethrow;
-      }
-    }
+          return handler.next(options);
+        },
+      ),
+    );
+
+    // 2. Interceptor: Retry 3x on 5xx with exponential backoff
+    _dio.interceptors.add(
+      InterceptorsWrapper(
+        onError: (DioException error, handler) async {
+          final response = error.response;
+          final requestOptions = error.requestOptions;
+
+          int retryCount = requestOptions.extra['retry_count'] as int? ?? 0;
+          if (response != null &&
+              response.statusCode != null &&
+              response.statusCode! >= 500 &&
+              response.statusCode! < 600 &&
+              retryCount < 3) {
+            retryCount++;
+            requestOptions.extra['retry_count'] = retryCount;
+
+            final backoffMs = 1000 * (1 << retryCount); // 2s, 4s, 8s
+            await Future.delayed(Duration(milliseconds: backoffMs));
+
+            try {
+              final res = await _dio.fetch(requestOptions);
+              return handler.resolve(res);
+            } on DioException catch (retryError) {
+              return handler.next(retryError);
+            }
+          }
+          return handler.next(error);
+        },
+      ),
+    );
   }
 
   // --- API Methods ---
 
-  Future<SessionData> startSession() async {
-    final response = await _requestWithRetry('POST', '/api/chat/session/start');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to start session: ${response.body}', response.statusCode);
+  Future<Session> loadSession() async {
+    try {
+      final response = await _dio.get('/api/chat/session');
+      if (response.data == null) {
+        throw const ApiException('Session payload was empty', 204);
+      }
+      return Session.fromJson(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to load session',
+        e.response?.statusCode ?? 500,
+      );
     }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return SessionData.fromJson(data);
   }
 
-  Future<List<dynamic>> getConversations() async {
-    final response = await _requestWithRetry('GET', '/api/chat/conversations');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to get conversations: ${response.body}', response.statusCode);
+  Stream<String> sendMessage(String? conversationId, String message) async* {
+    try {
+      final response = await _dio.post<ResponseBody>(
+        '/api/chat/message',
+        data: {
+          'message': message,
+          if (conversationId != null) 'conversation_id': conversationId,
+        },
+        options: Options(responseType: ResponseType.stream),
+      );
+
+      final stream = response.data!.stream
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+
+      await for (final line in stream) {
+        if (line.startsWith('data: ')) {
+          final dataStr = line.substring(6).trim();
+          if (dataStr.isNotEmpty) {
+            yield dataStr;
+          }
+        }
+      }
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to send message',
+        e.response?.statusCode ?? 500,
+      );
     }
-    return jsonDecode(response.body) as List<dynamic>;
   }
 
-  Future<MessageResponse> sendMessage(String? conversationId, String message) async {
-    final response = await _requestWithRetry(
-      'POST', 
-      '/api/chat/message', 
-      body: {
-        'message': message,
-        if (conversationId != null) 'conversation_id': conversationId,
-      },
-    );
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to send message: ${response.body}', response.statusCode);
+  Future<List<Message>> getMessages(String? conversationId, {int? beforeId, int? limit}) async {
+    try {
+      final response = await _dio.get(
+        '/api/chat/messages',
+        queryParameters: {
+          if (beforeId != null) 'before_id': beforeId,
+          if (limit != null) 'limit': limit,
+        },
+      );
+      final list = response.data as List<dynamic>? ?? const [];
+      return list.map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to get messages',
+        e.response?.statusCode ?? 500,
+      );
     }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    
-    // Convert backend {"response": ..., "conversation_id": ..., "partner_mood": ...}
-    // into the required MessageResponse model structure.
-    final reply = data['response'] as String? ?? '';
-    return MessageResponse(
-      reply: reply,
-      bursts: [
-        ChatBurst(
-          text: reply,
-          preBurstDelayMs: 600,
-          typingDurationMs: (reply.length * 20).clamp(800, 2500),
-          pauseIntensity: 'medium',
-          isFollowUp: false,
-        )
-      ],
-      conversationId: data['conversation_id'] as String? ?? '',
-      memoryCount: 0,
-      pairId: '',
-      companionId: '',
-      companionName: '',
-    );
-  }
-
-  Future<List<Message>> getMessages(String conversationId, {String? beforeId, int? limit}) async {
-    final Map<String, String> queryParams = {};
-    if (beforeId != null) queryParams['before_id'] = beforeId;
-    if (limit != null) queryParams['limit'] = limit.toString();
-
-    final queryString = queryParams.isNotEmpty 
-        ? '?${Uri(queryParameters: queryParams).query}' 
-        : '';
-        
-    final response = await _requestWithRetry(
-      'GET', 
-      '/api/chat/conversations/$conversationId/messages$queryString',
-    );
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to get messages: ${response.body}', response.statusCode);
-    }
-    final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   Future<RelationshipSummary> getRelationshipSummary() async {
-    final response = await _requestWithRetry('GET', '/api/profile/relationship');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to get relationship summary: ${response.body}', response.statusCode);
-    }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return RelationshipSummary.fromJson(data);
-  }
-
-  Future<List<Memory>> getMemories({String? type, String? sort}) async {
-    final Map<String, String> queryParams = {};
-    if (type != null) queryParams['type'] = type;
-    if (sort != null) queryParams['sort'] = sort;
-
-    final queryString = queryParams.isNotEmpty 
-        ? '?${Uri(queryParameters: queryParams).query}' 
-        : '';
-
-    final response = await _requestWithRetry('GET', '/api/profile/memories$queryString');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to get memories: ${response.body}', response.statusCode);
-    }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final memoriesList = data['memories'] as List<dynamic>? ?? [];
-    return memoriesList.map((e) => Memory.fromJson(e as Map<String, dynamic>)).toList();
-  }
-
-  Future<void> pinMemory(String memoryId) async {
-    final response = await _requestWithRetry('POST', '/api/profile/memories/$memoryId/pin');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to pin memory: ${response.body}', response.statusCode);
+    try {
+      final response = await _dio.get('/api/profile/relationship');
+      return RelationshipSummary.fromJson(response.data as Map<String, dynamic>? ?? const {});
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to get relationship summary',
+        e.response?.statusCode ?? 500,
+      );
     }
   }
 
-  Future<void> deleteMemory(String memoryId) async {
-    final response = await _requestWithRetry('DELETE', '/api/profile/memories/$memoryId');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to delete memory: ${response.body}', response.statusCode);
+  Future<List<Memory>> getMemories({String? type, String? sort, int? page}) async {
+    try {
+      final response = await _dio.get(
+        '/api/profile/memories',
+        queryParameters: {
+          if (type != null) 'type': type,
+          if (sort != null) 'sort': sort,
+          if (page != null) 'page': page,
+        },
+      );
+      final rawData = response.data as Map<String, dynamic>? ?? const {};
+      final list = rawData['memories'] as List<dynamic>? ?? const [];
+      return list.map((e) => Memory.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to get memories',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<void> pinMemory(int id) async {
+    try {
+      await _dio.post('/api/profile/memories/$id/pin');
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to pin memory',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<void> deleteMemory(int id) async {
+    try {
+      await _dio.delete('/api/profile/memories/$id');
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to delete memory',
+        e.response?.statusCode ?? 500,
+      );
     }
   }
 
   Future<List<ProactiveMessage>> getPendingProactive() async {
-    final response = await _requestWithRetry('GET', '/api/proactive/pending');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to get pending proactive messages: ${response.body}', response.statusCode);
+    try {
+      final response = await _dio.get('/api/proactive/pending');
+      final list = response.data as List<dynamic>? ?? const [];
+      return list.map((e) => ProactiveMessage.fromJson(e as Map<String, dynamic>)).toList();
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to get pending proactive messages',
+        e.response?.statusCode ?? 500,
+      );
     }
-    final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((e) => ProactiveMessage.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<void> acknowledgeProactive(String messageId) async {
-    final response = await _requestWithRetry('POST', '/api/proactive/acknowledge/$messageId');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to acknowledge message: ${response.body}', response.statusCode);
+  Future<void> acknowledgeProactive(String id) async {
+    try {
+      await _dio.post('/api/proactive/acknowledge/$id');
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to acknowledge proactive message',
+        e.response?.statusCode ?? 500,
+      );
     }
+  }
+
+  Future<Map<String, dynamic>> onboardingStatus() async {
+    try {
+      final response = await _dio.get('/api/onboarding/status');
+      return response.data as Map<String, dynamic>? ?? const {};
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to check onboarding status',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<OnboardingQuestion> onboardingStart() async {
+    try {
+      final response = await _dio.post('/api/onboarding/start');
+      return OnboardingQuestion.fromJson(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to start onboarding',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<OnboardingStepResult> onboardingRespond(int step, dynamic response) async {
+    try {
+      final res = await _dio.post(
+        '/api/onboarding/respond',
+        data: {
+          'step': step,
+          'response': response,
+        },
+      );
+      return OnboardingStepResult.fromJson(res.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to submit onboarding response',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<OnboardingCompleteResult> onboardingComplete() async {
+    try {
+      final response = await _dio.post('/api/onboarding/complete');
+      return OnboardingCompleteResult.fromJson(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to complete onboarding',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<void> registerFcmToken(String token, String platform) async {
+    try {
+      await _dio.post(
+        '/api/notifications/register',
+        data: {
+          'fcm_token': token,
+        },
+      );
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to register FCM token',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  // --- Backwards Compatibility / Legacy Screen Methods ---
+
+  Future<OnboardingStepResult> checkOnboardingStatus() async {
+    final response = await _dio.get('/api/onboarding/status');
+    final data = response.data as Map<String, dynamic>;
+    return OnboardingStepResult(
+      nextStep: data['current_step']?.toString(),
+      question: null,
+      isComplete: data['complete'] == true || data['complete'] == 1,
+    );
   }
 
   Future<OnboardingStepResult> startOnboarding() async {
-    final response = await _requestWithRetry('POST', '/api/onboarding/start');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to start onboarding: ${response.body}', response.statusCode);
-    }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final response = await _dio.post('/api/onboarding/start');
+    final data = response.data as Map<String, dynamic>;
     return OnboardingStepResult(
       nextStep: data['step']?.toString(),
-      question: data['question'] as String?,
+      question: OnboardingQuestion.fromJson(data),
       isComplete: false,
     );
   }
 
-  Future<OnboardingStepResult> checkOnboardingStatus() async {
-    final response = await _requestWithRetry('GET', '/api/onboarding/status');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to check onboarding status: ${response.body}', response.statusCode);
-    }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return OnboardingStepResult(
-      isComplete: data['complete'] as bool? ?? false,
-      nextStep: data['current_step']?.toString(),
-    );
-  }
-
   Future<OnboardingStepResult> completeOnboardingStep(int step, dynamic response) async {
-    final res = await _requestWithRetry(
-      'POST', 
-      '/api/onboarding/respond', 
-      body: {
+    final res = await _dio.post(
+      '/api/onboarding/respond',
+      data: {
         'step': step,
         'response': response,
       },
     );
-    if (res.statusCode != 200) {
-      throw ApiException('Failed to complete onboarding step: ${res.body}', res.statusCode);
+    final data = res.data as Map<String, dynamic>;
+    
+    final rawQuestion = data['question'];
+    OnboardingQuestion? nextQuestion;
+    if (rawQuestion is Map<String, dynamic>) {
+      nextQuestion = OnboardingQuestion.fromJson(rawQuestion);
+    } else if (data['step'] != null) {
+      nextQuestion = OnboardingQuestion.fromJson(data);
     }
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
+
     return OnboardingStepResult(
-      nextStep: data['step']?.toString(),
-      question: data['question'] as String?,
-      isComplete: data['complete'] as bool? ?? false,
+      nextStep: data['next_step']?.toString() ?? data['step']?.toString(),
+      question: nextQuestion,
+      isComplete: data['is_complete'] == true || data['is_complete'] == 1 || data['complete'] == true,
     );
   }
 
   Future<OnboardingCompleteResult> completeOnboarding() async {
-    // 1. Mark onboarding complete in backend
-    final res = await _requestWithRetry('POST', '/api/onboarding/complete');
-    if (res.statusCode != 200) {
-      throw ApiException('Failed to complete onboarding: ${res.body}', res.statusCode);
-    }
-    final resData = jsonDecode(res.body) as Map<String, dynamic>;
-    final firstMessage = resData['first_message'] as String? ?? 'hey. you actually showed up.';
+    return onboardingComplete();
+  }
 
-    // 2. Fetch primary pair / active session info to populate OnboardingCompleteResult
+  Future<Map<String, dynamic>> getProfile() async {
     try {
-      final sessionResponse = await _requestWithRetry('POST', '/api/chat/session/start');
-      if (sessionResponse.statusCode == 200) {
-        final sessionData = jsonDecode(sessionResponse.body) as Map<String, dynamic>;
-        // Use loaded session details to return a complete onboarding result
-        return OnboardingCompleteResult(
-          companionId: sessionData['companion_id']?.toString() ?? '',
-          companionName: sessionData['companion_name']?.toString() ?? resData['partner_name']?.toString() ?? '',
-          companionSummary: sessionData['companion_summary']?.toString() ?? '',
-          humanizingDetails: (sessionData['humanizing_details'] as List<dynamic>? ?? const [])
-              .map((e) => e.toString())
-              .toList(),
-          conversationalVibe: sessionData['conversational_vibe']?.toString() ?? '',
-          openingLine: firstMessage,
-          pairId: sessionData['pair_id']?.toString() ?? '',
-        );
-      }
-    } catch (e) {
-      debugPrint('Failed to load session details during onboarding completion: $e');
+      final response = await _dio.get('/api/profile/me');
+      return response.data as Map<String, dynamic>? ?? const {};
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to get profile',
+        e.response?.statusCode ?? 500,
+      );
     }
-
-    // Fallback if session loader fails
-    return OnboardingCompleteResult(
-      companionId: 'companion',
-      companionName: resData['partner_name']?.toString() ?? 'Companion',
-      companionSummary: '',
-      humanizingDetails: const [],
-      conversationalVibe: '',
-      openingLine: firstMessage,
-      pairId: '',
-    );
-  }
-  
-  Future<void> registerDeviceToken({
-    required String platform,
-    required String pushToken,
-  }) async {
-    final response = await _requestWithRetry(
-      'POST', 
-      '/api/me/device-token', 
-      body: {
-        'platform': platform,
-        'push_token': pushToken,
-      },
-    );
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to register device token: ${response.body}', response.statusCode);
-    }
-  }
-
-  Future<void> deleteAllMemories() async {
-    final response = await _requestWithRetry('DELETE', '/api/profile/memories');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to delete all memories: ${response.body}', response.statusCode);
-    }
-  }
-
-  Future<void> deleteAccount() async {
-    final response = await _requestWithRetry('DELETE', '/api/profile/me');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to delete account: ${response.body}', response.statusCode);
-    }
-  }
-
-  Future<Map<String, dynamic>> exportData(String userId) async {
-    final response = await _requestWithRetry('GET', '/api/ops/export/$userId');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to export data: ${response.body}', response.statusCode);
-    }
-    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   Future<void> updateProfile({
+    Map<String, dynamic>? data,
     String? displayName,
     String? communicationPace,
     bool? allowProactive,
     bool? allowPush,
   }) async {
-    final response = await _requestWithRetry(
-      'PATCH',
-      '/api/profile/me',
-      body: {
-        if (displayName != null) 'display_name': displayName,
-        if (communicationPace != null) 'communication_pace': communicationPace,
-        if (allowProactive != null) 'allow_proactive_messages': allowProactive,
-        if (allowPush != null) 'allow_push_notifications': allowPush,
-      },
-    );
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to update profile: ${response.body}', response.statusCode);
+    final Map<String, dynamic> body = {};
+    if (data != null) {
+      body.addAll(data);
+    }
+    if (displayName != null) body['display_name'] = displayName;
+    if (communicationPace != null) body['communication_pace'] = communicationPace;
+    if (allowProactive != null) body['allow_proactive_messages'] = allowProactive;
+    if (allowPush != null) body['allow_push_notifications'] = allowPush;
+
+    try {
+      await _dio.patch('/api/profile/me', data: body);
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to update profile',
+        e.response?.statusCode ?? 500,
+      );
     }
   }
 
-  Future<Map<String, dynamic>> getProfile() async {
-    final response = await _requestWithRetry('GET', '/api/profile/me');
-    if (response.statusCode != 200) {
-      throw ApiException('Failed to get profile: ${response.body}', response.statusCode);
+  Future<void> deleteAllMemories() async {
+    try {
+      await _dio.delete('/api/profile/memories');
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to delete all memories',
+        e.response?.statusCode ?? 500,
+      );
     }
-    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  Future<void> deleteAccount() async {
+    try {
+      await _dio.delete('/api/profile/me');
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to delete account',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> exportData(String userId) async {
+    try {
+      final response = await _dio.get('/api/ops/export/$userId');
+      return response.data as Map<String, dynamic>? ?? const {};
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to export data',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  // Legacy/Session support aliases
+  Future<Session> startSession() async {
+    return loadSession();
+  }
+
+  Future<List<dynamic>> getConversations() async {
+    try {
+      final response = await _dio.get('/api/chat/messages');
+      final list = response.data as List<dynamic>? ?? const [];
+      if (list.isNotEmpty) {
+        final convId = list.first['conversation_id'];
+        return [
+          {'id': convId}
+        ];
+      }
+      return const [];
+    } catch (_) {
+      return const [];
+    }
   }
 }
 

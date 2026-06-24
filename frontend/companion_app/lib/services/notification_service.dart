@@ -99,9 +99,9 @@ class NotificationService {
   Future<void> _syncToken(String token) async {
     try {
       final platformName = Platform.isAndroid ? 'android' : (Platform.isIOS ? 'ios' : 'web');
-      await _apiService.registerDeviceToken(
-        platform: platformName,
-        pushToken: token,
+      await _apiService.registerFcmToken(
+        token,
+        platformName,
       );
       debugPrint('Successfully synced FCM token to backend.');
     } catch (e) {

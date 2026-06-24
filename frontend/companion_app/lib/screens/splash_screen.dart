@@ -33,7 +33,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> with SingleTickerPr
     
     try {
       final authState = ref.read(authStateProvider).value;
-      if (authState != null && authState.user != null) {
+      if (authState != null) {
         final apiService = ref.read(apiServiceProvider);
         final onboardingStatus = await apiService.checkOnboardingStatus();
         if (onboardingStatus.isComplete) {

@@ -443,7 +443,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
     final isPinned = memory.salience > 0.9;
 
     return Dismissible(
-      key: Key(memory.id),
+      key: Key(memory.id.toString()),
       direction: DismissDirection.endToStart,
       background: Container(
         alignment: Alignment.centerRight,
@@ -497,7 +497,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
                 children: [
                   // Type label in text-tertiary
                   Text(
-                    memory.memoryType.toLowerCase(),
+                    memory.memoryType.name.toLowerCase(),
                     style: GoogleFonts.jost(
                       fontSize: 11,
                       fontWeight: FontWeight.w400,

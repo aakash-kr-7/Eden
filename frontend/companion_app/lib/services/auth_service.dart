@@ -1,19 +1,11 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: services/auth_service.dart
+// PURPOSE: Firebase Auth — Google and email sign-in, auth state stream.
+// CONTEXT: Used by auth_provider.dart and routing logic in main.dart.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-
-class AuthState {
-  final User? user;
-  final bool isLoading;
-  final String? error;
-
-  const AuthState({
-    this.user,
-    this.isLoading = false,
-    this.error,
-  });
-
-  bool get isAuthenticated => user != null;
-}
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -24,16 +16,14 @@ class AuthService {
   User? get currentUser => _auth.currentUser;
   String? get currentUserId => _auth.currentUser?.uid;
 
-  Stream<AuthState> get authStateChanges {
-    return _auth.authStateChanges().map((User? user) {
-      return AuthState(user: user);
-    });
-  }
+  Stream<User?> get authStateChanges => _auth.authStateChanges();
 
-  Future<User?> signInWithGoogle() async {
+  Future<UserCredential> signInWithGoogle() async {
     try {
       final GoogleSignInAccount? googleAccount = await _googleSignIn.signIn();
-      if (googleAccount == null) return null;
+      if (googleAccount == null) {
+        throw const AuthException('Google sign-in cancelled by user');
+      }
 
       final GoogleSignInAuthentication googleAuth = await googleAccount.authentication;
       final OAuthCredential credential = GoogleAuthProvider.credential(
@@ -41,20 +31,18 @@ class AuthService {
         idToken: googleAuth.idToken,
       );
 
-      final UserCredential userCredential = await _auth.signInWithCredential(credential);
-      return userCredential.user;
+      return await _auth.signInWithCredential(credential);
     } catch (e) {
       throw AuthException(e.toString());
     }
   }
 
-  Future<User?> signInWithEmailPassword(String email, String password) async {
+  Future<UserCredential> signInWithEmail(String email, String password) async {
     try {
-      final UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+      return await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
-      return userCredential.user;
     } on FirebaseAuthException catch (e) {
       throw AuthException(e.message ?? 'Authentication failed', code: e.code);
     } catch (e) {
@@ -62,13 +50,12 @@ class AuthService {
     }
   }
 
-  Future<User?> signUpWithEmailPassword(String email, String password) async {
+  Future<UserCredential> createWithEmail(String email, String password) async {
     try {
-      final UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+      return await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
-      return userCredential.user;
     } on FirebaseAuthException catch (e) {
       throw AuthException(e.message ?? 'Registration failed', code: e.code);
     } catch (e) {
@@ -81,6 +68,22 @@ class AuthService {
       _auth.signOut(),
       _googleSignIn.signOut(),
     ]);
+  }
+
+  Future<String> getCurrentIdToken() async {
+    return await _auth.currentUser?.getIdToken() ?? '';
+  }
+
+  // --- Compatibility Aliases ---
+
+  Future<User?> signInWithEmailPassword(String email, String password) async {
+    final cred = await signInWithEmail(email, password);
+    return cred.user;
+  }
+
+  Future<User?> signUpWithEmailPassword(String email, String password) async {
+    final cred = await createWithEmail(email, password);
+    return cred.user;
   }
 
   Future<String?> getIdToken() async {
