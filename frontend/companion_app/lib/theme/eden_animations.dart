@@ -190,8 +190,13 @@ class _PulseAnimationState extends State<PulseAnimation> with SingleTickerProvid
 // ─── Reusable BreathingBackground Widget ─────────────────────────────
 class BreathingBackground extends StatefulWidget {
   final Widget? child;
+  final Color baseColor;
 
-  const BreathingBackground({super.key, this.child});
+  const BreathingBackground({
+    super.key,
+    this.child,
+    this.baseColor = EdenColors.edenDepth,
+  });
 
   @override
   State<BreathingBackground> createState() => _BreathingBackgroundState();
@@ -221,7 +226,10 @@ class _BreathingBackgroundState extends State<BreathingBackground> with SingleTi
       animation: _controller,
       builder: (context, child) {
         return CustomPaint(
-          painter: _AtmosphericPainter(progress: _controller.value),
+          painter: _AtmosphericPainter(
+            progress: _controller.value,
+            baseColor: widget.baseColor,
+          ),
           child: child,
         );
       },
@@ -232,13 +240,17 @@ class _BreathingBackgroundState extends State<BreathingBackground> with SingleTi
 
 class _AtmosphericPainter extends CustomPainter {
   final double progress;
+  final Color baseColor;
 
-  _AtmosphericPainter({required this.progress});
+  _AtmosphericPainter({
+    required this.progress,
+    required this.baseColor,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     // 1. Draw base deep background
-    final paintBase = Paint()..color = EdenColors.edenDepth;
+    final paintBase = Paint()..color = baseColor;
     canvas.drawRect(Offset.zero & size, paintBase);
 
     // Coordinate shift (2-3px movement drift)
@@ -298,6 +310,6 @@ class _AtmosphericPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _AtmosphericPainter oldDelegate) {
-    return oldDelegate.progress != progress;
+    return oldDelegate.progress != progress || oldDelegate.baseColor != baseColor;
   }
 }

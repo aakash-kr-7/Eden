@@ -19,6 +19,10 @@ class MessagesNotifier extends StateNotifier<List<Message>> {
 
   MessagesNotifier(this._ref) : super(const []);
 
+  void setMessages(List<Message> messages) {
+    state = messages;
+  }
+
   Future<void> loadFromCache() async {
     try {
       final localCache = _ref.read(localCacheServiceProvider);
