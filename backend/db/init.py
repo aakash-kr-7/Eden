@@ -8,8 +8,23 @@ import sqlite3
 from pathlib import Path
 from config import settings
 import logging
+import os
+import sys
 
 logger = logging.getLogger(__name__)
+
+# Windows DLL search path helper for sqlite-vec MinGW dependencies
+if sys.platform == "win32":
+    git_mingw = r"C:\Program Files\Git\mingw64\bin"
+    if os.path.exists(git_mingw) and git_mingw not in os.environ["PATH"]:
+        os.environ["PATH"] = git_mingw + ";" + os.environ["PATH"]
+    try:
+        import sqlite_vec
+        sqlite_vec_dir = os.path.dirname(sqlite_vec.loadable_path())
+        if os.path.exists(sqlite_vec_dir) and sqlite_vec_dir not in os.environ["PATH"]:
+            os.environ["PATH"] = sqlite_vec_dir + ";" + os.environ["PATH"]
+    except Exception:
+        pass
 
 def get_db_path() -> str:
     return settings.DATABASE_URL

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str
     GROQ_CHAT_MODEL: str = "llama-3.3-70b-versatile"
     GROQ_FAST_MODEL: str = "llama-3.1-8b-instant"
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     LLM_TEMPERATURE: float = 0.85
     LLM_MAX_TOKENS: int = 400
     MAX_CONTEXT_MESSAGES: int = 10

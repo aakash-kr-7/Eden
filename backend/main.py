@@ -82,6 +82,36 @@ def proactive_deliver():
 
 def dream_loop_check():
     logger.info("Executing scheduled job: dream_loop_check")
+    import asyncio
+    import sqlite3
+    from config import settings
+    from memory.consolidator import MemoryConsolidator
+    
+    db_path = settings.DATABASE_URL
+    conn = sqlite3.connect(
+        db_path,
+        check_same_thread=False,
+        isolation_level=None
+    )
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.enable_load_extension(True)
+        import sqlite_vec
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        conn.execute("PRAGMA foreign_keys=ON")
+    except Exception as e:
+        logger.error(f"Failed to load sqlite-vec in dream_loop_check: {e}")
+        conn.close()
+        return
+
+    try:
+        consolidator = MemoryConsolidator()
+        asyncio.run(consolidator.run_pending(conn))
+    except Exception as e:
+        logger.error(f"Error executing dream_loop_check: {e}", exc_info=True)
+    finally:
+        conn.close()
 
 scheduler = BackgroundScheduler()
 
