@@ -1,14 +1,22 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: screens/onboarding_screen.dart
+// PURPOSE: 9-step conversational onboarding that generates the user's partner.
+// CONTEXT: Runs once per user. After completion, partner exists forever.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../theme/eden_theme.dart';
-import '../main.dart';
-import '../widgets/question_card.dart';
+import '../theme/eden_colors.dart';
+import '../theme/eden_typography.dart';
+import '../theme/eden_animations.dart';
+import '../providers/onboarding_provider.dart';
+import '../widgets/pill_option.dart';
+import '../widgets/eden_button.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -17,268 +25,349 @@ class OnboardingScreen extends ConsumerStatefulWidget {
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
-  int _currentStep = 0;
-  final Map<int, dynamic> _responses = {};
-  bool _isLoading = true;
-  bool _isComplete = false;
-  String? _partnerName;
-  String? _firstMessage;
-  String? _errorMessage;
+class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with TickerProviderStateMixin {
+  final _textController = TextEditingController();
+  String? _selectedOption;
+  bool _isAnimatingOut = false;
 
-  // Typewriter state
-  String _displayedText = '';
-  int _charIndex = 0;
+  // Transition controllers
+  late final AnimationController _outController;
+  late final AnimationController _inController;
+
+  // Partner reveal state
+  String _displayedMessage = '';
+  bool _messageTypewriterFinished = false;
   Timer? _typewriterTimer;
-  bool _typewriterFinished = false;
 
   @override
   void initState() {
     super.initState();
+    _outController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _inController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    // Initially, show the first question immediately
+    _inController.value = 1.0;
+
     WidgetsBinding.instance.addPostFrameCallback((_) => _initOnboarding());
   }
 
   @override
   void dispose() {
+    _textController.dispose();
+    _outController.dispose();
+    _inController.dispose();
     _typewriterTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _initOnboarding() async {
-    try {
-      final apiService = ref.read(apiServiceProvider);
-      final status = await apiService.checkOnboardingStatus();
-      
-      if (status.isComplete) {
-        // If already completed onboarding, trigger full-screen intro directly
-        setState(() {
-          _isLoading = true;
-        });
-        final completeResult = await apiService.completeOnboarding();
-        setState(() {
-          _partnerName = completeResult.companionName;
-          _firstMessage = completeResult.openingLine;
-          _isComplete = true;
-          _isLoading = false;
-        });
-        if (_firstMessage != null) {
-          _startTypewriter(_firstMessage!);
-        }
-      } else {
-        // Retrieve current onboarding step from backend
-        final result = await apiService.startOnboarding();
-        setState(() {
-          _currentStep = int.tryParse(result.nextStep ?? '0') ?? 0;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _errorMessage = 'Failed to load onboarding. Please try again.';
-      });
+    final notifier = ref.read(onboardingProvider.notifier);
+    await notifier.start();
+    
+    final state = ref.read(onboardingProvider);
+    if (state.isComplete && state.firstMessage != null) {
+      _triggerRevealTimeline(state.firstMessage!);
     }
   }
 
-  Future<void> _submitAnswer(dynamic response) async {
-    setState(() {
-      _errorMessage = null;
-    });
+  bool get _isValid {
+    final state = ref.read(onboardingProvider);
+    final q = state.question;
+    if (q == null) return false;
 
-    // 200ms brief pause to let selection animation feel solid
-    await Future.delayed(const Duration(milliseconds: 200));
-
-    // Keep response in local state
-    _responses[_currentStep] = response;
-
-    try {
-      final apiService = ref.read(apiServiceProvider);
-      
-      if (_currentStep < onboardingQuestions.length - 1) {
-        // Submit current step answer to API
-        final result = await apiService.completeOnboardingStep(_currentStep, response);
-        
-        // Go to next question, cross-fade is handled by AnimatedSwitcher
-        final nextStep = int.tryParse(result.nextStep ?? '') ?? (_currentStep + 1);
-        setState(() {
-          _currentStep = nextStep;
-        });
-      } else {
-        // Final step: show loading and complete onboarding
-        setState(() {
-          _isLoading = true;
-        });
-        
-        // Call respond endpoint for step 8
-        await apiService.completeOnboardingStep(_currentStep, response);
-        
-        // Call final completion endpoint
-        final completeResult = await apiService.completeOnboarding();
-
-        setState(() {
-          _partnerName = completeResult.companionName;
-          _firstMessage = completeResult.openingLine;
-          _isComplete = true;
-          _isLoading = false;
-        });
-
-        // Trigger typewriter
-        if (_firstMessage != null) {
-          _startTypewriter(_firstMessage!);
-        }
+    if (q.type == 'open_text') {
+      final text = _textController.text.trim();
+      if (q.optional) {
+        return true;
       }
-    } catch (e) {
-      setState(() {
-        _errorMessage = e.toString().replaceAll('ApiException(400):', '').trim();
-      });
-      // Rethrow to let QuestionCard reset its submit button state
-      rethrow;
+      return text.length >= 2;
+    } else {
+      return _selectedOption != null;
     }
   }
 
-  void _startTypewriter(String message) {
+  dynamic _getCurrentAnswer() {
+    final state = ref.read(onboardingProvider);
+    final q = state.question;
+    if (q == null) return null;
+
+    if (q.type == 'open_text') {
+      return _textController.text.trim();
+    } else {
+      return _selectedOption;
+    }
+  }
+
+  Future<void> _handleNext() async {
+    if (!_isValid || _isAnimatingOut) return;
+
+    final answer = _getCurrentAnswer();
+    final stateBefore = ref.read(onboardingProvider);
+    final stepToSubmit = stateBefore.currentStep;
+    final notifier = ref.read(onboardingProvider.notifier);
+
+    // Haptic feedback on next action
+    HapticFeedback.mediumImpact();
+
+    // 1. OUT animation: opacity 1 -> 0, slide 0 -> -8
     setState(() {
-      _displayedText = '';
-      _charIndex = 0;
-      _typewriterFinished = false;
+      _isAnimatingOut = true;
     });
+    await _outController.forward(from: 0.0);
+
+    try {
+      // 2. Submit response to provider/API and wait for processing
+      await notifier.respond(stepToSubmit, answer);
+
+      // Check if we are complete
+      final stateAfter = ref.read(onboardingProvider);
+      
+      _outController.reset();
+      
+      if (stateAfter.isComplete) {
+        if (stateAfter.firstMessage != null) {
+          _triggerRevealTimeline(stateAfter.firstMessage!);
+        }
+      } else {
+        // 3. Gap of 50ms
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        // Reset inputs for the next step
+        _textController.clear();
+        _selectedOption = null;
+
+        // 4. IN animation: opacity 0 -> 1, slide 8 -> 0
+        setState(() {
+          _isAnimatingOut = false;
+        });
+        await _inController.forward(from: 0.0);
+      }
+    } catch (e) {
+      // On error, restore visibility of the current question
+      if (mounted) {
+        _outController.reset();
+        setState(() {
+          _isAnimatingOut = false;
+        });
+        _inController.value = 1.0;
+      }
+    }
+  }
+
+  void _triggerRevealTimeline(String message) {
     _typewriterTimer?.cancel();
-    _typewriterTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
-      if (_charIndex < message.length) {
-        setState(() {
-          _displayedText += message[_charIndex];
-          _charIndex++;
-        });
-      } else {
-        timer.cancel();
-        setState(() {
-          _typewriterFinished = true;
-        });
-      }
+    setState(() {
+      _displayedMessage = '';
+      _messageTypewriterFinished = false;
+    });
+
+    // After 800ms, start letter-by-letter typewriter
+    _typewriterTimer = Timer(const Duration(milliseconds: 800), () {
+      int charIndex = 0;
+      _typewriterTimer = Timer.periodic(const Duration(milliseconds: 25), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        if (charIndex < message.length) {
+          setState(() {
+            _displayedMessage += message[charIndex];
+          });
+          charIndex++;
+        } else {
+          timer.cancel();
+          setState(() {
+            _messageTypewriterFinished = true;
+          });
+        }
+      });
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final state = ref.watch(onboardingProvider);
+
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: const Color(0xFF0A0A0F),
-        body: Stack(
-          children: [
-            // Ambient breathing background
-            Positioned.fill(child: const _AmbientBackground()),
-            
-            SafeArea(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    switchInCurve: Curves.easeInOut,
-                    switchOutCurve: Curves.easeInOut,
-                    transitionBuilder: (child, animation) {
-                      return FadeTransition(
-                        opacity: animation,
-                        child: child,
-                      );
-                    },
-                    child: _isComplete
-                        ? _buildFirstImpressionMoment()
-                        : (_isLoading
-                            ? const PulsingLoadingState()
-                            : SingleChildScrollView(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    QuestionCard(
-                                      key: ValueKey<int>(_currentStep),
-                                      config: onboardingQuestions[_currentStep],
-                                      onAnswer: _submitAnswer,
-                                    ),
-                                    if (_errorMessage != null) ...[
-                                      const SizedBox(height: 24),
-                                      _buildErrorPanel(),
-                                    ],
-                                  ],
-                                ),
-                              )),
+        backgroundColor: Colors.transparent, // Let Container handle it
+        resizeToAvoidBottomInset: true,
+        body: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: state.isComplete
+              ? Container(
+                  key: const ValueKey('void_bg'),
+                  color: EdenColors.edenVoid,
+                  child: _buildPartnerReveal(state.partnerName ?? 'Companion', state.firstMessage ?? ''),
+                )
+              : Container(
+                  key: const ValueKey('onboarding_content'),
+                  color: EdenColors.edenDepth,
+                  child: Stack(
+                    children: [
+                      // Atmospheric background with three breathing orbs
+                      const Positioned.fill(child: AtmosphericBackground()),
+
+                      // Error message if any
+                      if (state.errorMessage != null)
+                        Positioned(
+                          top: MediaQuery.of(context).padding.top + 16,
+                          left: 24,
+                          right: 24,
+                          child: _buildErrorPanel(state.errorMessage!),
+                        ),
+
+                      // Loading state or conversational questions
+                      SafeArea(
+                        child: state.isLoading
+                            ? (state.currentStep >= 8 || state.question == null
+                                ? const PulsingLoadingState(text: 'meeting them...')
+                                : const PulsingLoadingState(text: 'gathering presence...'))
+                            : _buildQuestionFlow(state),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ),
-          ],
         ),
       ),
     );
   }
 
-  Widget _buildFirstImpressionMoment() {
-    return Column(
-      key: const ValueKey('first_impression'),
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.center,
+  Widget _buildQuestionFlow(OnboardingState state) {
+    final q = state.question;
+    if (q == null) return const SizedBox.shrink();
+
+    final double opacity = _isAnimatingOut
+        ? (1.0 - CurvedAnimation(parent: _outController, curve: Curves.easeIn).value)
+        : CurvedAnimation(parent: _inController, curve: Curves.easeOut).value;
+
+    final double translateY = _isAnimatingOut
+        ? CurvedAnimation(parent: _outController, curve: Curves.easeIn).value * -8.0
+        : (1.0 - CurvedAnimation(parent: _inController, curve: Curves.easeOut).value) * 8.0;
+
+    return Stack(
       children: [
-        // Partner name at the top
-        Text(
-          _partnerName ?? 'Companion',
-          style: GoogleFonts.cormorantGaramond(
-            fontSize: 28,
-            fontWeight: FontWeight.w300,
-            color: EdenTheme.accentSecondary,
-            letterSpacing: -0.2,
-          ),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 48),
-        
-        // Typewriter first message
-        ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 120),
-          child: Text(
-            _displayedText,
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 24,
-              fontWeight: FontWeight.w300,
-              color: EdenTheme.textPrimary,
-              height: 1.4,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ),
-        const SizedBox(height: 64),
-        
-        // Fading continue button
-        AnimatedOpacity(
-          opacity: _typewriterFinished ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 600),
-          child: IgnorePointer(
-            ignoring: !_typewriterFinished,
-            child: InkWell(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                context.go('/chat');
-              },
-              borderRadius: BorderRadius.circular(20),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                    decoration: BoxDecoration(
-                      color: EdenTheme.bgSurface.withValues(alpha: 0.60),
-                      border: Border.all(color: EdenTheme.textPrimary.withValues(alpha: 0.07), width: 0.6),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'continue',
-                      style: GoogleFonts.jost(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w400,
-                        color: EdenTheme.textPrimary.withValues(alpha: 0.78),
-                        letterSpacing: 1.0,
+        // Centered Content (Question + Input/Options)
+        Positioned(
+          top: MediaQuery.of(context).size.height * 0.35,
+          left: 24,
+          right: 24,
+          bottom: MediaQuery.of(context).viewInsets.bottom > 0 ? 0 : null,
+          child: SingleChildScrollView(
+            physics: const ClampingScrollPhysics(),
+            child: Opacity(
+              opacity: opacity.clamp(0.0, 1.0),
+              child: Transform.translate(
+                offset: Offset(0.0, translateY),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Question text (centered horizontally, max width 320px)
+                    Container(
+                      constraints: const BoxConstraints(maxWidth: 320),
+                      child: Text(
+                        q.question,
+                        style: EdenTypography.displayMd.copyWith(
+                          color: EdenColors.textPrimary,
+                        ),
+                        textAlign: TextAlign.center,
                       ),
+                    ),
+                    const SizedBox(height: 48),
+
+                    // Input / choices container
+                    Container(
+                      constraints: const BoxConstraints(maxWidth: 320),
+                      child: q.type == 'open_text'
+                          ? TextField(
+                              controller: _textController,
+                              style: EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
+                              textAlign: TextAlign.center,
+                              cursorColor: EdenColors.edenIris,
+                              textCapitalization: TextCapitalization.sentences,
+                              onChanged: (_) => setState(() {}),
+                              onSubmitted: (_) {
+                                if (_isValid) {
+                                  _handleNext();
+                                }
+                              },
+                              decoration: const InputDecoration(
+                                border: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: EdenColors.edenRim, width: 1.0),
+                                ),
+                                enabledBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: EdenColors.edenRim, width: 1.0),
+                                ),
+                                focusedBorder: UnderlineInputBorder(
+                                  borderSide: BorderSide(color: EdenColors.edenIris, width: 1.0),
+                                ),
+                                contentPadding: EdgeInsets.symmetric(vertical: 8),
+                              ),
+                            )
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: q.options.map((option) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 10.0),
+                                  child: PillOption(
+                                    text: option,
+                                    isSelected: _selectedOption == option,
+                                    onTap: () {
+                                      setState(() {
+                                        _selectedOption = option;
+                                      });
+                                    },
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // Bottom navigation next arrow (Only appears after user has given a valid answer)
+        Positioned(
+          bottom: MediaQuery.of(context).padding.bottom + 24,
+          right: 24,
+          child: AnimatedOpacity(
+            opacity: _isValid ? 1.0 : 0.0,
+            duration: const Duration(milliseconds: 200),
+            child: AnimatedScale(
+              scale: _isValid ? 1.0 : 0.8,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: !_isValid,
+                child: GestureDetector(
+                  onTap: _handleNext,
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: const BoxDecoration(
+                      color: EdenColors.edenIris,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: EdenColors.edenIrisGlow,
+                          blurRadius: 12,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.arrow_forward_rounded,
+                      color: Colors.white,
+                      size: 24,
                     ),
                   ),
                 ),
@@ -290,18 +379,87 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  Widget _buildErrorPanel() {
+  Widget _buildPartnerReveal(String partnerName, String firstMessage) {
+    return SafeArea(
+      child: Stack(
+        children: [
+          // Top Center: Partner Name
+          Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 80.0),
+              child: FadeSlideIn(
+                duration: const Duration(milliseconds: 500),
+                offsetY: 12.0,
+                curve: Curves.decelerate,
+                child: Text(
+                  partnerName,
+                  style: EdenTypography.displayLg.copyWith(
+                    color: EdenColors.textPrimary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
+
+          // Center: Typewritten First Message
+          Align(
+            alignment: Alignment.center,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: Text(
+                  _displayedMessage,
+                  style: EdenTypography.bodyXl.copyWith(
+                    color: EdenColors.textPartner,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
+
+          // Bottom Center: Continue Button (Fades in when typewriter completes)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 48.0),
+              child: AnimatedOpacity(
+                opacity: _messageTypewriterFinished ? 1.0 : 0.0,
+                duration: const Duration(milliseconds: 300),
+                child: IgnorePointer(
+                  ignoring: !_messageTypewriterFinished,
+                  child: EdenSecondaryButton(
+                    text: 'continue',
+                    width: 200,
+                    onTap: () {
+                      HapticFeedback.selectionClick();
+                      context.go('/chat');
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorPanel(String error) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: EdenTheme.destructive.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: EdenTheme.destructive.withValues(alpha: 0.2)),
+        color: EdenColors.semanticError.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: EdenColors.semanticError.withValues(alpha: 0.2)),
       ),
       child: Text(
-        _errorMessage!,
+        error.replaceAll('ApiException:', '').trim(),
         style: GoogleFonts.plusJakartaSans(
-          color: EdenTheme.destructive.withValues(alpha: 0.9),
+          color: EdenColors.semanticError.withValues(alpha: 0.9),
           fontSize: 14,
         ),
         textAlign: TextAlign.center,
@@ -310,63 +468,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 }
 
-// --- Question Configuration ---
-const List<QuestionConfig> onboardingQuestions = [
-  QuestionConfig(
-    step: 0,
-    question: "What should I call you?",
-    type: QuestionType.openText,
-  ),
-  QuestionConfig(
-    step: 1,
-    question: "What made you come here today?",
-    type: QuestionType.openText,
-  ),
-  QuestionConfig(
-    step: 2,
-    question: "When you really connect with someone — what does that feel like for you?",
-    type: QuestionType.openText,
-  ),
-  QuestionConfig(
-    step: 3,
-    question: "Do you tend to have long deep conversations or quick check-ins? Or something in between?",
-    type: QuestionType.multipleChoice,
-    options: ["long and deep", "quick and light", "it depends"],
-  ),
-  QuestionConfig(
-    step: 4,
-    question: "How much do you usually share with people you're close to?",
-    type: QuestionType.multipleChoice,
-    options: ["a lot — I go deep", "some things — when it feels right", "not much — I'm more private"],
-  ),
-  QuestionConfig(
-    step: 5,
-    question: "What kind of humor lands for you?",
-    type: QuestionType.multipleChoice,
-    options: ["dry and deadpan", "warm and silly", "dark and honest", "I'm not really a humor person"],
-  ),
-  QuestionConfig(
-    step: 6,
-    question: "What kind of connection are you hoping for here?",
-    type: QuestionType.multipleChoice,
-    options: ["someone to talk to", "a real friendship", "something that might become more", "I'm not sure yet"],
-  ),
-  QuestionConfig(
-    step: 7,
-    question: "Tell me one thing about yourself that you don't usually lead with.",
-    type: QuestionType.openText,
-  ),
-  QuestionConfig(
-    step: 8,
-    question: "Is there anything you'd want someone to know before getting to know you?",
-    type: QuestionType.openText,
-    optional: true,
-  ),
-];
-
-// --- Pulsing Loading State Helper ---
+// ─── Pulsing Loading State Helper ───────────────────────────────────
 class PulsingLoadingState extends StatefulWidget {
-  const PulsingLoadingState({super.key});
+  final String text;
+  const PulsingLoadingState({super.key, required this.text});
 
   @override
   State<PulsingLoadingState> createState() => _PulsingLoadingStateState();
@@ -374,7 +479,7 @@ class PulsingLoadingState extends StatefulWidget {
 
 class _PulsingLoadingStateState extends State<PulsingLoadingState> with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
-  late final Animation<double> _animation;
+  late final Animation<double> _scaleAnimation;
 
   @override
   void initState() {
@@ -383,7 +488,7 @@ class _PulsingLoadingStateState extends State<PulsingLoadingState> with SingleTi
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
-    _animation = Tween<double>(begin: 0.3, end: 1.0).animate(
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.02).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
   }
@@ -397,14 +502,12 @@ class _PulsingLoadingStateState extends State<PulsingLoadingState> with SingleTi
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: FadeTransition(
-        opacity: _animation,
+      child: ScaleTransition(
+        scale: _scaleAnimation,
         child: Text(
-          'meeting them...',
-          style: GoogleFonts.cormorantGaramond(
-            fontSize: 24,
-            fontWeight: FontWeight.w300,
-            color: EdenTheme.textSecondary,
+          widget.text,
+          style: EdenTypography.displayMd.copyWith(
+            color: EdenColors.textPrimary,
           ),
         ),
       ),
@@ -412,15 +515,15 @@ class _PulsingLoadingStateState extends State<PulsingLoadingState> with SingleTi
   }
 }
 
-// --- Breathing Ambient Background Helper ---
-class _AmbientBackground extends StatefulWidget {
-  const _AmbientBackground();
+// ─── Atmospheric Background Helper ──────────────────────────────────
+class AtmosphericBackground extends StatefulWidget {
+  const AtmosphericBackground({super.key});
 
   @override
-  State<_AmbientBackground> createState() => _AmbientBackgroundState();
+  State<AtmosphericBackground> createState() => _AtmosphericBackgroundState();
 }
 
-class _AmbientBackgroundState extends State<_AmbientBackground> with SingleTickerProviderStateMixin {
+class _AtmosphericBackgroundState extends State<AtmosphericBackground> with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override
@@ -444,29 +547,59 @@ class _AmbientBackgroundState extends State<_AmbientBackground> with SingleTicke
       animation: _controller,
       builder: (context, child) {
         final double pulse = _controller.value;
-        return Container(
-          decoration: BoxDecoration(
-            gradient: RadialGradient(
-              center: Alignment(-0.6, -0.5 + (pulse * 0.1)),
-              radius: 1.2,
-              colors: [
-                EdenTheme.accentPrimary.withValues(alpha: 0.04 + (pulse * 0.02)),
-                Colors.transparent,
-              ],
-            ),
-          ),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(0.6, 0.5 - (pulse * 0.1)),
-                radius: 1.4,
-                colors: [
-                  EdenTheme.accentSecondary.withValues(alpha: 0.03 + ((1 - pulse) * 0.02)),
-                  Colors.transparent,
-                ],
+        return Stack(
+          children: [
+            // Solid base background
+            Container(color: EdenColors.edenDepth),
+
+            // Orb 1: Top-Left (Presence Blue)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(-0.8, -0.7 + (pulse * 0.15)),
+                    radius: 1.2,
+                    colors: [
+                      EdenColors.presenceBlue.withValues(alpha: 0.04 + (pulse * 0.02)),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
               ),
             ),
-          ),
+
+            // Orb 2: Bottom-Right (Warm Violet)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(0.8, 0.7 - (pulse * 0.15)),
+                    radius: 1.3,
+                    colors: [
+                      EdenColors.warmViolet.withValues(alpha: 0.03 + ((1.0 - pulse) * 0.02)),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Orb 3: Bottom-Center (Human Warmth)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment(0.0, 0.9 + (pulse * 0.1)),
+                    radius: 1.0,
+                    colors: [
+                      EdenColors.humanWarmth.withValues(alpha: 0.02 + (pulse * 0.015)),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );

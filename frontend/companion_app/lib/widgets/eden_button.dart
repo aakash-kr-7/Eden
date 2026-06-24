@@ -14,6 +14,7 @@ class EdenPrimaryButton extends StatefulWidget {
   final VoidCallback? onTap;
   final bool isLoading;
   final double? width;
+  final Widget? icon;
 
   const EdenPrimaryButton({
     super.key,
@@ -21,6 +22,7 @@ class EdenPrimaryButton extends StatefulWidget {
     this.onTap,
     this.isLoading = false,
     this.width,
+    this.icon,
   });
 
   @override
@@ -59,9 +61,19 @@ class _EdenPrimaryButtonState extends State<EdenPrimaryButton> {
                 valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
               ),
             )
-          : Text(
-              widget.text,
-              style: EdenTypography.button,
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.icon != null) ...[
+                  widget.icon!,
+                  const SizedBox(width: 12.0),
+                ],
+                Text(
+                  widget.text,
+                  style: EdenTypography.button,
+                ),
+              ],
             ),
     );
 
@@ -92,6 +104,7 @@ class EdenSecondaryButton extends StatefulWidget {
   final VoidCallback? onTap;
   final bool isLoading;
   final double? width;
+  final Widget? icon;
 
   const EdenSecondaryButton({
     super.key,
@@ -99,6 +112,7 @@ class EdenSecondaryButton extends StatefulWidget {
     this.onTap,
     this.isLoading = false,
     this.width,
+    this.icon,
   });
 
   @override
@@ -134,9 +148,19 @@ class _EdenSecondaryButtonState extends State<EdenSecondaryButton> {
                 valueColor: AlwaysStoppedAnimation<Color>(EdenColors.textPrimary),
               ),
             )
-          : Text(
-              widget.text,
-              style: EdenTypography.button.copyWith(color: EdenColors.textPrimary),
+          : Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.icon != null) ...[
+                  widget.icon!,
+                  const SizedBox(width: 12.0),
+                ],
+                Text(
+                  widget.text,
+                  style: EdenTypography.button.copyWith(color: EdenColors.textPrimary),
+                ),
+              ],
             ),
     );
 

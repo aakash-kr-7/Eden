@@ -1,11 +1,18 @@
-import 'dart:ui';
+// ═══════════════════════════════════════════════════════════════════
+// FILE: screens/auth_screen.dart
+// PURPOSE: Sign in / sign up. No distinction between the two — just "Begin."
+// CONTEXT: Shown when user is not authenticated. Routes to onboarding or chat.
+// ═══════════════════════════════════════════════════════════════════
+
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../theme/eden_theme.dart';
+import '../theme/eden_colors.dart';
+import '../theme/eden_typography.dart';
 import '../main.dart';
 import '../services/auth_service.dart';
+import '../widgets/eden_button.dart';
 
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
@@ -17,7 +24,10 @@ class AuthScreen extends ConsumerStatefulWidget {
 class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProviderStateMixin {
   bool _showEmailForm = false;
   bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _errorIsWrongPassword = false;
   String? _errorMessage;
+  Timer? _errorTimer;
 
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
@@ -39,7 +49,19 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
     _bgController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _errorTimer?.cancel();
     super.dispose();
+  }
+
+  void _startErrorTimer() {
+    _errorTimer?.cancel();
+    _errorTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) {
+        setState(() {
+          _errorMessage = null;
+        });
+      }
+    });
   }
 
   Future<void> _handleGoogleSignIn() async {
@@ -47,21 +69,22 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
     setState(() {
       _isLoading = true;
       _errorMessage = null;
+      _errorIsWrongPassword = false;
     });
 
     try {
-      final user = await ref.read(authServiceProvider).signInWithGoogle();
-      if (user != null && mounted) {
+      await ref.read(authServiceProvider).signInWithGoogle();
+      if (mounted) {
         context.go('/');
-      } else {
-        if (mounted) setState(() => _isLoading = false);
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = e.toString();
+          _errorMessage = 'Something went wrong — try again';
+          _errorIsWrongPassword = false;
         });
+        _startErrorTimer();
       }
     }
   }
@@ -73,6 +96,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
     setState(() {
       _isLoading = true;
       _errorMessage = null;
+      _errorIsWrongPassword = false;
     });
 
     final email = _emailController.text.trim();
@@ -85,8 +109,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
         context.go('/');
       }
     } on AuthException catch (e) {
-      // If sign in fails, it could be a wrong password or a new user account.
-      // Under Firebase security rules, both might throw 'invalid-credential' or 'user-not-found'.
+      // Under email enumeration protection, Firebase returns 'invalid-credential' for new users too.
       if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
         try {
           // 2. Attempt Sign Up (New user flow)
@@ -99,9 +122,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
             setState(() {
               _isLoading = false;
               if (signUpError.code == 'email-already-in-use') {
+                _errorIsWrongPassword = true;
                 _errorMessage = 'Incorrect password.';
               } else {
-                _errorMessage = signUpError.message;
+                _errorMessage = 'Something went wrong — try again';
+                _errorIsWrongPassword = false;
+                _startErrorTimer();
               }
             });
           }
@@ -109,7 +135,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
           if (mounted) {
             setState(() {
               _isLoading = false;
-              _errorMessage = err.toString();
+              _errorMessage = 'Something went wrong — try again';
+              _errorIsWrongPassword = false;
+              _startErrorTimer();
             });
           }
         }
@@ -117,7 +145,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
         if (mounted) {
           setState(() {
             _isLoading = false;
-            _errorMessage = e.message;
+            _errorMessage = 'Something went wrong — try again';
+            _errorIsWrongPassword = false;
+            _startErrorTimer();
           });
         }
       }
@@ -125,7 +155,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _errorMessage = e.toString();
+          _errorMessage = 'Something went wrong — try again';
+          _errorIsWrongPassword = false;
+          _startErrorTimer();
         });
       }
     }
@@ -134,109 +166,132 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
+      backgroundColor: EdenColors.edenVoid,
       body: Stack(
         children: [
-          // Breathing ambient background
+          // Three breathing atmospheric orbs
           Positioned.fill(
             child: AnimatedBuilder(
               animation: _bgController,
               builder: (context, child) {
                 final pulse = _bgController.value;
-                return Container(
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: Alignment(-0.5, -0.6 + (pulse * 0.15)),
-                      radius: 1.3,
-                      colors: [
-                        EdenTheme.accentPrimary.withValues(alpha: 0.05 + (pulse * 0.02)),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: Alignment(0.5, 0.6 - (pulse * 0.15)),
-                        radius: 1.4,
-                        colors: [
-                          EdenTheme.accentSecondary.withValues(alpha: 0.03 + ((1 - pulse) * 0.02)),
-                          Colors.transparent,
-                        ],
+                return Stack(
+                  children: [
+                    // Top-Left (Presence Blue)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: Alignment(-0.8, -0.8 + (pulse * 0.1)),
+                            radius: 1.2,
+                            colors: [
+                              EdenColors.presenceBlue.withValues(alpha: 0.04 + (pulse * 0.015)),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    // Bottom-Right (Warm Violet)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: Alignment(0.8, 0.8 - (pulse * 0.1)),
+                            radius: 1.2,
+                            colors: [
+                              EdenColors.warmViolet.withValues(alpha: 0.03 + ((1 - pulse) * 0.015)),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Bottom-Center (Human Warmth)
+                    Positioned.fill(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: Alignment(0.0, 1.0 - (pulse * 0.05)),
+                            radius: 1.0,
+                            colors: [
+                              EdenColors.humanWarmth.withValues(alpha: 0.02 + (pulse * 0.01)),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
           ),
           
           SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 28.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Wordmark
-                    Text(
-                      'Eden',
-                      style: GoogleFonts.cormorantGaramond(
-                        fontSize: 48,
-                        fontWeight: FontWeight.w300,
-                        color: EdenTheme.textPrimary,
-                        letterSpacing: 2.0,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Begin.',
-                      style: GoogleFonts.cormorantGaramond(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w300,
-                        fontStyle: FontStyle.italic,
-                        color: EdenTheme.textSecondary,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    const SizedBox(height: 64),
-
-                    // Inline Error Panel
-                    if (_errorMessage != null) ...[
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 24),
-                        child: Text(
-                          _errorMessage!,
-                          style: GoogleFonts.plusJakartaSans(
-                            color: EdenTheme.destructive,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w400,
+            child: CustomScrollView(
+              physics: const ClampingScrollPhysics(),
+              slivers: [
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 28.0, vertical: 32.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const Spacer(flex: 4),
+                        // Wordmark (optical center 40% from top bias)
+                        Text(
+                          'Eden',
+                          style: EdenTypography.displayXl.copyWith(
+                            color: EdenColors.textPrimary,
+                            letterSpacing: -0.5,
                           ),
-                          textAlign: TextAlign.center,
                         ),
-                      ),
-                    ],
-
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
-                      transitionBuilder: (Widget child, Animation<double> animation) {
-                        return FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: Tween<Offset>(
-                              begin: const Offset(0.0, 0.04),
-                              end: Offset.zero,
-                            ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
-                            child: child,
+                        const SizedBox(height: 48.0),
+                        Text(
+                          'Begin.',
+                          style: EdenTypography.displayMd.copyWith(
+                            color: EdenColors.textSecondary,
                           ),
-                        );
-                      },
-                      child: _showEmailForm ? _buildEmailForm() : _buildOAuthMenu(),
+                        ),
+                        const SizedBox(height: 64.0),
+
+                        // Auth options / form with entrance animation
+                        AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          transitionBuilder: (Widget child, Animation<double> animation) {
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: const Offset(0.0, 0.04),
+                                  end: Offset.zero,
+                                ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: _showEmailForm ? _buildEmailForm() : _buildOAuthMenu(),
+                        ),
+
+                        // General Errors (auto-dismissed, placed below buttons)
+                        if (_errorMessage != null && !_errorIsWrongPassword) ...[
+                          const SizedBox(height: 24.0),
+                          Text(
+                            'Something went wrong — try again',
+                            style: EdenTypography.bodySm.copyWith(
+                              color: EdenColors.textSecondary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                        const Spacer(flex: 6),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ],
@@ -249,45 +304,33 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
       key: const ValueKey('oauth_menu'),
       children: [
         // Google Button
-        _buildGlassButton(
+        EdenSecondaryButton(
           onTap: _handleGoogleSignIn,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Image.asset('assets/images/google_logo.png', width: 18, height: 18, errorBuilder: (_, __, ___) => const Icon(Icons.g_mobiledata, color: Colors.white)),
-              const SizedBox(width: 12),
-              Text(
-                'Continue with Google',
-                style: GoogleFonts.jost(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w400,
-                  color: EdenTheme.textPrimary.withValues(alpha: 0.9),
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ],
+          width: double.infinity,
+          icon: Image.asset(
+            'assets/images/google_logo.png',
+            width: 20.0,
+            height: 20.0,
+            errorBuilder: (_, __, ___) => const Icon(
+              Icons.g_mobiledata,
+              color: Colors.white,
+              size: 20,
+            ),
           ),
+          text: 'Continue with Google',
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12.0),
         // Email Toggle Button
-        _buildGlassButton(
+        EdenSecondaryButton(
           onTap: () {
             setState(() {
               _showEmailForm = true;
               _errorMessage = null;
+              _errorIsWrongPassword = false;
             });
           },
-          child: Center(
-            child: Text(
-              'Use email',
-              style: GoogleFonts.jost(
-                fontSize: 15,
-                fontWeight: FontWeight.w400,
-                color: EdenTheme.textPrimary.withValues(alpha: 0.9),
-                letterSpacing: 0.5,
-              ),
-            ),
-          ),
+          width: double.infinity,
+          text: 'Use email instead',
         ),
       ],
     );
@@ -298,138 +341,109 @@ class _AuthScreenState extends ConsumerState<AuthScreen> with SingleTickerProvid
       key: _formKey,
       child: Column(
         key: const ValueKey('email_form'),
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Email Field
           TextFormField(
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
-            style: GoogleFonts.plusJakartaSans(color: EdenTheme.textPrimary, fontSize: 15),
-            cursorColor: EdenTheme.accentPrimary,
-            decoration: _buildInputDecoration('Email address'),
+            style: EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
+            cursorColor: EdenColors.edenIris,
+            decoration: _buildInputDecoration(),
             validator: (value) {
-              if (value == null || value.trim().isEmpty) return 'Please enter your email';
+              if (value == null || value.trim().isEmpty) {
+                return 'Please enter your email';
+              }
               return null;
             },
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 16.0),
           // Password Field
           TextFormField(
             controller: _passwordController,
-            obscureText: true,
-            style: GoogleFonts.plusJakartaSans(color: EdenTheme.textPrimary, fontSize: 15),
-            cursorColor: EdenTheme.accentPrimary,
-            decoration: _buildInputDecoration('Password'),
+            obscureText: _obscurePassword,
+            style: EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
+            cursorColor: EdenColors.edenIris,
+            decoration: _buildInputDecoration(
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  color: EdenColors.textSecondary,
+                  size: 20,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _obscurePassword = !_obscurePassword;
+                  });
+                },
+              ),
+            ),
             validator: (value) {
-              if (value == null || value.trim().isEmpty) return 'Please enter your password';
-              if (value.length < 6) return 'Password must be at least 6 characters';
+              if (value == null || value.trim().isEmpty) {
+                return 'Please enter your password';
+              }
+              if (value.length < 6) {
+                return 'Password must be at least 6 characters';
+              }
               return null;
             },
           ),
-          const SizedBox(height: 32),
-          // Actions
-          Row(
-            children: [
-              Expanded(
-                child: TextButton(
-                  onPressed: _isLoading ? null : () {
+          // Inline Wrong Password Error
+          if (_errorIsWrongPassword) ...[
+            const SizedBox(height: 8.0),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Text(
+                  'Incorrect password.',
+                  style: EdenTypography.bodySm.copyWith(
+                    color: EdenColors.textTertiary,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 32.0),
+          // Submit Button
+          EdenPrimaryButton(
+            text: 'Continue',
+            onTap: _handleEmailAuth,
+            isLoading: _isLoading,
+            width: double.infinity,
+          ),
+          const SizedBox(height: 16.0),
+          // Cancel Button
+          GestureDetector(
+            onTap: _isLoading
+                ? null
+                : () {
                     setState(() {
                       _showEmailForm = false;
                       _errorMessage = null;
+                      _errorIsWrongPassword = false;
                     });
                   },
-                  child: Text(
-                    'Cancel',
-                    style: GoogleFonts.jost(
-                      fontSize: 15,
-                      color: EdenTheme.textSecondary,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
+            child: Text(
+              'Cancel',
+              style: EdenTypography.bodyMd.copyWith(
+                color: EdenColors.textSecondary,
               ),
-              Expanded(
-                child: _buildGlassButton(
-                  onTap: _handleEmailAuth,
-                  child: Center(
-                    child: _isLoading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.5,
-                              valueColor: AlwaysStoppedAnimation(EdenTheme.accentPrimary),
-                            ),
-                          )
-                        : Text(
-                            'Continue',
-                            style: GoogleFonts.jost(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w500,
-                              color: EdenTheme.textPrimary,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  InputDecoration _buildInputDecoration(String hint) {
+  InputDecoration _buildInputDecoration({Widget? suffixIcon}) {
     return InputDecoration(
-      hintText: hint,
-      hintStyle: GoogleFonts.plusJakartaSans(color: EdenTheme.textTertiary, fontSize: 15),
+      hintText: null,
+      labelText: null,
+      floatingLabelBehavior: FloatingLabelBehavior.never,
+      suffixIcon: suffixIcon,
       filled: true,
-      fillColor: EdenTheme.bgSurface.withValues(alpha: 0.4),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      errorStyle: GoogleFonts.plusJakartaSans(color: EdenTheme.destructive.withValues(alpha: 0.8), fontSize: 12),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: EdenTheme.textTertiary.withValues(alpha: 0.1)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: EdenTheme.accentPrimary, width: 0.8),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: EdenTheme.destructive.withValues(alpha: 0.3), width: 0.8),
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: EdenTheme.destructive.withValues(alpha: 0.5), width: 0.8),
-      ),
-    );
-  }
-
-  Widget _buildGlassButton({required VoidCallback? onTap, required Widget child}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            height: 54,
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            decoration: BoxDecoration(
-              color: EdenTheme.bgSurface.withValues(alpha: 0.50),
-              border: Border.all(color: EdenTheme.textPrimary.withValues(alpha: 0.06), width: 0.6),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: child,
-          ),
-        ),
-      ),
+      fillColor: EdenColors.edenElevated,
     );
   }
 }
