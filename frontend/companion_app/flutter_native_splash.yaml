@@ -4,4 +4,5 @@ flutter_native_splash:
   android_12:
     color: "#000000"
     # Feeds Android an invisible icon so the screen remains totally black
-    image: "assets/images/transparent_pixel.png"
+    image: "assets/images/black_square.png"
+    icon_background_color: "#000000"

@@ -41,6 +41,7 @@ dev_dependencies:
   riverpod_generator: ^2.3.9
   isar_generator: ^3.1.0+1
   flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.7
 
 flutter:
   uses-material-design: true
@@ -49,6 +50,7 @@ flutter:
     - assets/images/eden_logo.png
     - assets/icon/app_icon.png
     - assets/bootup_animation.mp4
+    - assets/images/black_square.png
   fonts:
     - family: CormorantGaramond
       fonts:
@@ -67,11 +69,3 @@ flutter_icons:
   android: "launcher_icon"
   ios: true
   image_path: "assets/icon/app_icon.png"
-
-flutter_native_splash:
-  # Sets the background to solid black
-  color: "#000000"
-  
-  # Android 12+ configuration
-  android_12:
-    color: "#000000"
