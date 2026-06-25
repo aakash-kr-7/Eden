@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: widget_test.dart
+// PURPOSE: Widget tests for the companion application.
+// CONTEXT: Frontend tests.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

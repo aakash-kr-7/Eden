@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: models.dart
+// PURPOSE: Aggregated exports for Eden data models.
+// CONTEXT: Frontend data models.
+// ═══════════════════════════════════════════════════════════════════
+
 export 'message.dart';
 export 'partner.dart';
 export 'session.dart';

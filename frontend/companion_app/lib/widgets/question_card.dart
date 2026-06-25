@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: question_card.dart
+// PURPOSE: UI widget representing an onboarding card question.
+// CONTEXT: Frontend UI components.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/eden_theme.dart';

@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: auth_provider.dart
+// PURPOSE: Riverpod provider managing user authentication state.
+// CONTEXT: Frontend state providers.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: providers/auth_provider.dart
 // PURPOSE: Riverpod provider for Firebase auth state.
 

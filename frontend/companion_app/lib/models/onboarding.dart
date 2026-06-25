@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: onboarding.dart
+// PURPOSE: Data model mapping onboarding responses.
+// CONTEXT: Frontend data models.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: models/onboarding.dart
 // PURPOSE: Onboarding step data and complete result model.
 

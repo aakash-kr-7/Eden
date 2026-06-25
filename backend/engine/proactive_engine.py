@@ -206,8 +206,8 @@ class ProactiveEngine:
         """
         Generates a natural-sounding outreach message using llama-3.3-70b-versatile.
         """
-        character = get_partner_instance(user_id)
-        if not character:
+        partner = get_partner_instance(user_id)
+        if not partner:
             logger.error(f"No partner instance found for user {user_id} during message generation")
             return ""
 
@@ -238,12 +238,12 @@ class ProactiveEngine:
                 "Keep it warm, but not overly dramatic. Just a light mention."
             )
 
-        system_prompt = f"""You are {character.name}. Here is your persona:
-{character.persona.get("summary") or ""}
+        system_prompt = f"""You are {partner.name}. Here is your persona:
+{partner.persona.get("summary") or ""}
 Your voice / texting style:
-- Sentence rhythm: {character.voice_style.get("sentence_rhythm") or "casual"}
-- Punctuation & capitalization: {character.voice_style.get("punctuation_tendencies") or "casual"}
-- Vocabulary register: {character.voice_style.get("vocabulary_profile") or "casual"}
+- Sentence rhythm: {partner.voice_style.get("sentence_rhythm") or "casual"}
+- Punctuation & capitalization: {partner.voice_style.get("punctuation_tendencies") or "casual"}
+- Vocabulary register: {partner.voice_style.get("vocabulary_profile") or "casual"}
 
 TASK:
 Write a proactive text message to the user.

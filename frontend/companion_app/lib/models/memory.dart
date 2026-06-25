@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: memory.dart
+// PURPOSE: Memory model definition for local caching and api communication.
+// CONTEXT: Frontend data models.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: models/memory.dart
 // PURPOSE: Episodic memory model for the memory vault.
 

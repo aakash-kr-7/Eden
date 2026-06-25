@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: onboarding_provider.dart
+// PURPOSE: Riverpod provider managing onboarding step state and submission.
+// CONTEXT: Frontend state providers.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: providers/onboarding_provider.dart
 // PURPOSE: Onboarding flow state — current step, responses, partner generation.
 

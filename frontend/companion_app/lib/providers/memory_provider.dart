@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: memory_provider.dart
+// PURPOSE: Riverpod provider managing user memory vault.
+// CONTEXT: Frontend state providers.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: providers/memory_provider.dart
 // PURPOSE: Memory vault state — fetching, filtering, pin/delete actions.
 

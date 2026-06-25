@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: message.dart
+// PURPOSE: Message model definition for chat messages.
+// CONTEXT: Frontend data models.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: models/message.dart
 // PURPOSE: Chat message model — user or partner, with emotional metadata.
 

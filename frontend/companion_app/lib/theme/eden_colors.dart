@@ -36,7 +36,7 @@ class EdenColors {
   static const Color edenGold = Color(0xFFE8C98A);
   static const Color edenGoldDim = Color(0x1EE8C98A);    // rgba(232, 201, 138, 0.12)
 
-  // ─── Sol Atmospheric Orbs (Breathing Backgrounds) ─────────────────
+  // ─── Eden Atmospheric Orbs (Breathing Backgrounds) ─────────────────
   static const Color presenceBlue = Color(0xFF7DA2FF);   // presence blue - emotional core
   static const Color warmViolet = Color(0xFFA78BFA);    // warm violet - vulnerability
   static const Color humanWarmth = Color(0xFFF2B8A0);   // human warmth - subtle

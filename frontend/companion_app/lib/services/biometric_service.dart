@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: biometric_service.dart
+// PURPOSE: Service managing local biometric lock auth.
+// CONTEXT: Frontend services.
+// ═══════════════════════════════════════════════════════════════════
+
 // =============================================================================
 // biometric_service.dart — Secure native biometric and PIN service
 // =============================================================================

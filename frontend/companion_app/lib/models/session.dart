@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: session.dart
+// PURPOSE: Session model mapping companion chat session details.
+// CONTEXT: Frontend data models.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: models/session.dart
 // PURPOSE: Session bootstrap payload returned on app open.
 

@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: notification_service.dart
+// PURPOSE: Service managing push notifications and local channels.
+// CONTEXT: Frontend services.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'dart:async';
 import 'dart:io';
 import 'package:firebase_messaging/firebase_messaging.dart';

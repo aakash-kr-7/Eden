@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: burst_playback_service.dart
+// PURPOSE: Service managing scheduled playback of message bursts.
+// CONTEXT: Frontend services.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

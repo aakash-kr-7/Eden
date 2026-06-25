@@ -154,6 +154,44 @@ def stop_scheduler():
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting up Eden application...")
+    
+    # Production guards
+    if settings.ENVIRONMENT == "production":
+        logger.info("Running production checks...")
+        # 1. DATABASE_URL check
+        if not settings.DATABASE_URL.startswith("/app/data/"):
+            logger.critical(f"DATABASE_URL must start with /app/data/ in production. Current: {settings.DATABASE_URL}")
+            raise SystemExit(1)
+            
+        # 2. FIREBASE_CREDENTIALS check
+        has_b64 = bool(settings.FIREBASE_CREDENTIALS_B64 and settings.FIREBASE_CREDENTIALS_B64.strip())
+        has_path = False
+        if settings.FIREBASE_CREDENTIALS_PATH:
+            import os
+            has_path = os.path.exists(settings.FIREBASE_CREDENTIALS_PATH)
+        if not (has_b64 or has_path):
+            logger.critical("Neither FIREBASE_CREDENTIALS_B64 is set nor does FIREBASE_CREDENTIALS_PATH exist in production.")
+            raise SystemExit(1)
+            
+        # 3. GROQ_API_KEY check
+        if not settings.GROQ_API_KEY or not settings.GROQ_API_KEY.strip():
+            logger.critical("GROQ_API_KEY must not be empty in production.")
+            raise SystemExit(1)
+            
+        # 4. OPS_SECRET_KEY check
+        if settings.OPS_SECRET_KEY == "dev-only-change-in-production":
+            logger.warning("OPS_SECRET_KEY is set to default 'dev-only-change-in-production' in production.")
+
+    # Preload SentenceTransformers embedding model
+    try:
+        from memory.embedder import Embedder
+        Embedder.get()
+        logger.info("Embedding model loaded: all-MiniLM-L6-v2")
+    except Exception as e:
+        logger.error(f"Failed to preload embedding model: {e}", exc_info=True)
+        if settings.ENVIRONMENT == "production":
+            raise SystemExit(1)
+
     initialize_database()
     initialize_firebase()
     start_scheduler()

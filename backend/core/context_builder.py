@@ -522,27 +522,27 @@ async def build_context(
     fact_rows = db.get_user_fact_rows(user_id, pair_id=pair_id, limit=FACT_LIMIT) if allow_memory_storage else []
     user_name = user.get("preferred_name") or user.get("name")
 
-    character = get_partner_instance(cid) or get_partner_instance(user_id)
-    if not character:
+    partner = get_partner_instance(cid) or get_partner_instance(user_id)
+    if not partner:
         raise ValueError(f"No partner instance found for user {user_id} or partner {cid}.")
-    cid = character.id
+    cid = partner.id
 
     # Active partner facts setup
     if allow_memory_storage:
         active_partner_facts = db.get_partner_facts(user_id, pair_id=pair_id)
         if not active_partner_facts:
             seeds = {
-                "age": str(character.core_identity.get("age", 24)),
+                "age": str(partner.core_identity.get("age", 24)),
                 "favorite_color": "deep, warm colors",
                 "favorite_food": "simple comfort food",
                 "favorite_music": "melancholic or soft background tracks",
                 "sleep_habits": "restless or sleeping at odd hours",
                 "routines": "quiet moments of thinking, wandering around",
                 "insecurities": "worries about feeling disconnected or misunderstood",
-                "hobbies": ", ".join(character.personality_traits.get("quirks", [])[:2]),
-                "attachment_style": character.persona.get("attachment_tendency", "secure"),
-                "texting_habits": character.persona.get("communication_rhythm", "measured"),
-                "emotional_tendencies": character.persona.get("emotional_availability", "medium"),
+                "hobbies": ", ".join(partner.personality_traits.get("quirks", [])[:2]),
+                "attachment_style": partner.persona.get("attachment_tendency", "secure"),
+                "texting_habits": partner.persona.get("communication_rhythm", "measured"),
+                "emotional_tendencies": partner.persona.get("emotional_availability", "medium"),
                 "social_behavior": "prefers meaningful interactions over superficial noise",
                 "opinions": "thinks modern life is way too noisy",
             }
@@ -713,12 +713,12 @@ async def build_context(
         mood = "content"
         if emotional_summary and emotional_summary.get("dominant_emotions"):
             mood = ", ".join(emotional_summary["dominant_emotions"])
-        elif character.matching_profile:
-            mood = character.matching_profile.get("social_energy", "content")
+        elif partner.matching_profile:
+            mood = partner.matching_profile.get("social_energy", "content")
 
         energy = "balanced"
-        if character.matching_profile:
-            energy = character.matching_profile.get("social_energy", "balanced")
+        if partner.matching_profile:
+            energy = partner.matching_profile.get("social_energy", "balanced")
 
     closeness_score = float(pair.get("closeness_score") or 0.18)
     trust_score = float(pair.get("trust_score") or 0.18)
@@ -755,10 +755,10 @@ async def build_context(
 
     # Prepare the partner dictionary matching what build_system_prompt expects
     partner_payload = {
-        "name": character.persona.get("name") or character.name,
-        "persona_json": character.persona,
-        "voice_style": character.voice_style,
-        "flaw_profile": character.persona.get("flaw_profile") or pair.get("flaw_profile") or flaws_from_character(character),
+        "name": partner.persona.get("name") or partner.name,
+        "persona_json": partner.persona,
+        "voice_style": partner.voice_style,
+        "flaw_profile": partner.persona.get("flaw_profile") or pair.get("flaw_profile") or flaws_from_partner(partner),
         "inside_jokes": inside_jokes,
         "shared_rituals": shared_rituals,
         "generated_at": pair.get("generated_at")
@@ -904,9 +904,9 @@ def _user_local_now(timezone_name: Optional[str]) -> datetime:
     return datetime.utcnow()
 
 
-def flaws_from_character(character) -> str:
+def flaws_from_partner(partner) -> str:
     try:
-        traits = character.personality_traits
+        traits = partner.personality_traits
         if isinstance(traits, dict):
             flaws = traits.get("flaws") or traits.get("shadow_traits")
             if isinstance(flaws, list):

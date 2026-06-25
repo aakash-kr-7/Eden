@@ -65,7 +65,7 @@ class DefaultFirebaseOptions {
     storageBucket: 'eden-237a9.firebasestorage.app',
     androidClientId: '1022130965696-difh6rigu4msgeib5e5tg9v392clvdfe.apps.googleusercontent.com',
     iosClientId: '1022130965696-ugehe2paj92it0vuhi48o68cn0190a7h.apps.googleusercontent.com',
-    iosBundleId: 'com.solmvp.companionApp',
+    iosBundleId: 'com.edenmvp.companionApp',
   );
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyCu1RjAmpOtfzumYzw6VDYMNL5xqI1G4g4',
@@ -75,7 +75,7 @@ class DefaultFirebaseOptions {
     storageBucket: 'eden-237a9.firebasestorage.app',
     androidClientId: '1022130965696-difh6rigu4msgeib5e5tg9v392clvdfe.apps.googleusercontent.com',
     iosClientId: '1022130965696-ugehe2paj92it0vuhi48o68cn0190a7h.apps.googleusercontent.com',
-    iosBundleId: 'com.solmvp.companionApp',
+    iosBundleId: 'com.edenmvp.companionApp',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(

@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: partner.dart
+// PURPOSE: Partner model representing companion characteristics and state.
+// CONTEXT: Frontend data models.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: models/partner.dart  
 // PURPOSE: Partner data model — name, stage, current mood, energy.
 

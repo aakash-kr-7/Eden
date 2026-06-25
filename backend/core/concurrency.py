@@ -1,3 +1,9 @@
+# ═══════════════════════════════════════════════════════════════════
+# FILE: concurrency.py
+# PURPOSE: Provides concurrency controls and lock managers for user operations.
+# CONTEXT: Backend core infrastructure.
+# ═══════════════════════════════════════════════════════════════════
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager

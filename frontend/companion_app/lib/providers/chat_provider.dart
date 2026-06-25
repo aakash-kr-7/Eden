@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: chat_provider.dart
+// PURPOSE: Riverpod provider managing chat streaming and message list.
+// CONTEXT: Frontend state providers.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: providers/chat_provider.dart
 // PURPOSE: Chat state — messages, streaming status, typing indicator.
 

@@ -1,3 +1,9 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: session_provider.dart
+// PURPOSE: Riverpod provider managing active companion session.
+// CONTEXT: Frontend state providers.
+// ═══════════════════════════════════════════════════════════════════
+
 // FILE: providers/session_provider.dart  
 // PURPOSE: Session state — partner info, conversation id, unread messages.
 
