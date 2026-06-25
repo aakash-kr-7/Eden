@@ -15,6 +15,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'firebase_options.dart';
 import 'theme/eden_theme.dart';
+import 'screens/boot_screen.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/onboarding_screen.dart';
@@ -50,7 +51,8 @@ class GoRouterRefreshStream extends ChangeNotifier {
 
   GoRouterRefreshStream(Stream<dynamic> stream) {
     notifyListeners();
-    _subscription = stream.asBroadcastStream().listen((dynamic _) => notifyListeners());
+    _subscription =
+        stream.asBroadcastStream().listen((dynamic _) => notifyListeners());
   }
 
   @override
@@ -71,11 +73,12 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final isAuthenticated = authService.currentUser != null;
 
-      final isSplash = state.matchedLocation == '/';
+      final isSplash =
+          state.matchedLocation == '/' || state.matchedLocation == '/splash';
       final isAuth = state.matchedLocation == '/auth';
 
       if (!isAuthenticated) {
-        // Force unauthenticated users to /auth unless they are already there or on the splash screen
+        // Force unauthenticated users to /auth unless they are already there or on the startup screens
         if (!isAuth && !isSplash) {
           return '/auth';
         }
@@ -90,6 +93,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(
         path: '/',
+        builder: (context, state) => const BootScreen(),
+      ),
+      GoRoute(
+        path: '/splash',
         builder: (context, state) => const SplashScreen(),
       ),
       GoRoute(
@@ -166,7 +173,7 @@ class _EdenAppState extends ConsumerState<EdenApp> {
 
   Future<void> _initNotifications() async {
     final notificationService = ref.read(notificationServiceProvider);
-    
+
     // Configure background notification tap routing callback
     notificationService.onNavigateToChat = () {
       final router = ref.read(routerProvider);

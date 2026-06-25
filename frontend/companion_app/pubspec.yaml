@@ -31,6 +31,7 @@ dependencies:
   http: ^1.2.0
   local_auth: ^2.1.8
   uuid: ^4.3.3
+  video_player: ^2.2.2
 
 dev_dependencies:
   flutter_test:
@@ -47,6 +48,7 @@ flutter:
     - assets/fonts/
     - assets/images/eden_logo.png
     - assets/icon/app_icon.png
+    - assets/bootup_animation.mp4
   fonts:
     - family: CormorantGaramond
       fonts:
@@ -65,3 +67,11 @@ flutter_icons:
   android: "launcher_icon"
   ios: true
   image_path: "assets/icon/app_icon.png"
+
+flutter_native_splash:
+  # Sets the background to solid black
+  color: "#000000"
+  
+  # Android 12+ configuration
+  android_12:
+    color: "#000000"
