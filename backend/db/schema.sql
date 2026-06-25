@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS users (
     emotional_depth_preference TEXT,
     humor_style TEXT,
     created_at TEXT NOT NULL,
-    last_active_at TEXT
+    last_active_at TEXT,
+    last_seen_message_at TEXT
 );
 
 -- Partners (one per user, permanent)
@@ -142,6 +143,13 @@ CREATE TABLE IF NOT EXISTS onboarding_sessions (
     responses TEXT DEFAULT '{}',
     started_at TEXT NOT NULL,
     completed_at TEXT
+);
+
+-- Typing Status (Temporary Cache / SQLite representation)
+CREATE TABLE IF NOT EXISTS typing_status (
+    conversation_id TEXT PRIMARY KEY,
+    is_typing INTEGER DEFAULT 0,
+    updated_at TEXT NOT NULL
 );
 
 -- Schema version

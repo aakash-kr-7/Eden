@@ -19,7 +19,7 @@ import '../main.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/typing_indicator_v2.dart';
 import '../widgets/glass_card.dart';
-import '../providers/chat_provider_v2.dart';
+import '../providers/chat_provider_v3.dart';
 import '../providers/session_provider.dart';
 
 class ChatScreenV2 extends ConsumerStatefulWidget {
@@ -42,6 +42,8 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
   bool _noConnection = false;
   int? _firstProactiveMessageId;
   bool _showSendButton = false;
+  Timer? _typingTimer;
+  bool _lastSentTypingState = false;
 
   @override
   void initState() {
@@ -49,6 +51,7 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
     WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_onScroll);
     _inputController.addListener(_onInputChanged);
+    _inputFocusNode.addListener(_updateUserTypingState);
     WidgetsBinding.instance.addPostFrameCallback((_) => _initializeChat());
   }
 
@@ -57,6 +60,8 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
     WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_onScroll);
     _inputController.removeListener(_onInputChanged);
+    _inputFocusNode.removeListener(_updateUserTypingState);
+    _typingTimer?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
@@ -83,6 +88,10 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
           _headerOpacity = targetOpacity;
         });
       }
+
+      if (distanceFromBottom < 20.0) {
+        _markLastMessageAsRead();
+      }
     }
   }
 
@@ -92,6 +101,69 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
       setState(() {
         _showSendButton = hasText;
       });
+    }
+    _updateUserTypingState();
+  }
+
+  void _updateUserTypingState() {
+    final hasFocus = _inputFocusNode.hasFocus;
+    final hasText = _inputController.text.trim().isNotEmpty;
+    final isTyping = hasFocus && hasText && !_isSending;
+
+    final currentTypingState = ref.read(isUserTypingProvider);
+    if (currentTypingState != isTyping) {
+      ref.read(isUserTypingProvider.notifier).state = isTyping;
+    }
+
+    if (isTyping) {
+      if (_typingTimer == null) {
+        _sendTypingStatus(true);
+        _typingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          _sendTypingStatus(true);
+        });
+      }
+    } else {
+      if (_typingTimer != null) {
+        _typingTimer!.cancel();
+        _typingTimer = null;
+        _sendTypingStatus(false);
+      }
+    }
+  }
+
+  Future<void> _sendTypingStatus(bool isTyping) async {
+    if (isTyping == _lastSentTypingState) return;
+    _lastSentTypingState = isTyping;
+
+    try {
+      final conversationId = ref.read(sessionProvider).valueOrNull?.conversationId;
+      if (conversationId != null) {
+        await ref.read(apiServiceProvider).updateTypingStatus(conversationId, isTyping);
+      }
+    } catch (e) {
+      debugPrint("Failed to send typing status: $e");
+    }
+  }
+
+  Future<void> _markLastMessageAsRead() async {
+    final messages = ref.read(messagesProvider);
+    if (messages.isEmpty) return;
+
+    final newestMsg = messages.first;
+    final lastMessageId = newestMsg.id;
+    final currentLastSeen = ref.read(lastSeenMessageIdProvider);
+
+    if (lastMessageId != currentLastSeen) {
+      ref.read(lastSeenMessageIdProvider.notifier).state = lastMessageId;
+      
+      final conversationId = ref.read(sessionProvider).valueOrNull?.conversationId;
+      if (conversationId != null) {
+        try {
+          await ref.read(apiServiceProvider).markRead(conversationId, lastMessageId);
+        } catch (e) {
+          debugPrint("Failed to mark messages as read: $e");
+        }
+      }
     }
   }
 
@@ -206,6 +278,7 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
     if (retryText == null) {
       _inputController.clear();
       _showSendButton = false;
+      _updateUserTypingState();
     }
 
     _lastSentText = text;
@@ -254,9 +327,12 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
             target,
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,
-          );
+          ).then((_) {
+            _markLastMessageAsRead();
+          });
         } else {
           _scrollController.jumpTo(target);
+          _markLastMessageAsRead();
         }
       }
     });
@@ -316,7 +392,7 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
               child: Stack(
                 children: [
                   _buildMessageList(messages, listCount, showTyping, showStreaming, hasError, partner),
-                  _buildPartnerHeader(partner),
+                  _buildPartnerHeader(partner, showTyping),
                   if (_noConnection) _buildNoConnectionBanner(),
                   _buildInputArea(),
                 ],
@@ -328,7 +404,7 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
     );
   }
 
-  Widget _buildPartnerHeader(Partner? partner) {
+  Widget _buildPartnerHeader(Partner? partner, bool showTyping) {
     final partnerName = partner?.name ?? 'Eden';
     final partnerMood = _formatMood(partner?.currentMood);
 
@@ -362,9 +438,29 @@ class _ChatScreenV2State extends ConsumerState<ChatScreenV2> with WidgetsBinding
                           style: EdenTypography.displayMd.copyWith(color: EdenColors.textPrimary),
                         ),
                         const SizedBox(height: 2.0),
-                        Text(
-                          "$partnerName · $partnerMood",
-                          style: EdenTypography.bodySm.copyWith(color: EdenColors.textTertiary),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (!showTyping) ...[
+                              Container(
+                                width: 6.0,
+                                height: 6.0,
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: EdenColors.semanticSuccess,
+                                ),
+                              ),
+                              const SizedBox(width: 6.0),
+                            ],
+                            Text(
+                              showTyping ? "typing..." : "$partnerName · $partnerMood",
+                              style: EdenTypography.bodySm.copyWith(
+                                color: showTyping ? EdenColors.presenceBlue : EdenColors.textSecondary,
+                                fontStyle: showTyping ? FontStyle.italic : FontStyle.normal,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

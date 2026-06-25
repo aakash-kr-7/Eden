@@ -6,13 +6,15 @@
 
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../models/models.dart';
 import '../theme/eden_colors.dart';
 import '../theme/eden_typography.dart';
 import '../theme/eden_animations.dart';
+import '../providers/chat_provider_v3.dart';
 
-class MessageBubble extends StatelessWidget {
+class MessageBubble extends ConsumerWidget {
   final Message message;
   final bool showTimestamp;
   final String? customTimestampText;
@@ -48,8 +50,20 @@ class MessageBubble extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final bool isUser = message.isUser;
+    final messages = ref.watch(messagesProvider);
+    final isPartnerTyping = ref.watch(isTypingProvider);
+
+    bool isSeen = false;
+    bool isOptimistic = message.id > 1000000000000;
+
+    if (isUser) {
+      isSeen = messages.any((m) => m.role == MessageRole.partner && m.sentAt.isAfter(message.sentAt));
+      if (!isSeen) {
+        isSeen = isPartnerTyping;
+      }
+    }
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -108,9 +122,34 @@ class MessageBubble extends StatelessWidget {
                                 width: 1.0,
                               ),
                             ),
-                            child: Text(
-                              message.content,
-                              style: EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  message.content,
+                                  style: EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
+                                ),
+                                const SizedBox(height: 4.0),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    Text(
+                                      DateFormat('h:mm a').format(message.sentAt).toLowerCase(),
+                                      style: EdenTypography.bodySm.copyWith(
+                                        color: EdenColors.textSecondary.withValues(alpha: 0.6),
+                                        fontSize: 10.0,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4.0),
+                                    Icon(
+                                      isOptimistic ? Icons.done : Icons.done_all,
+                                      size: 14.0,
+                                      color: isSeen ? EdenColors.presenceBlue : EdenColors.textSecondary.withValues(alpha: 0.4),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                           ),
                         ),

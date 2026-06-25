@@ -447,6 +447,40 @@ class ApiService {
     }
   }
 
+  Future<void> markRead(String conversationId, int lastMessageId) async {
+    try {
+      await _dio.post(
+        '/api/chat/mark_read',
+        data: {
+          'conversation_id': conversationId,
+          'last_message_id': lastMessageId,
+        },
+      );
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to mark messages as read',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<void> updateTypingStatus(String conversationId, bool isTyping) async {
+    try {
+      await _dio.post(
+        '/api/chat/typing_status',
+        data: {
+          'conversation_id': conversationId,
+          'is_typing': isTyping,
+        },
+      );
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to update typing status',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
   // Legacy/Session support aliases
   Future<Session> startSession() async {
     return loadSession();

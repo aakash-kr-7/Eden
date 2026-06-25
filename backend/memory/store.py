@@ -148,6 +148,8 @@ class Database:
                 conn.execute("ALTER TABLE users ADD COLUMN onboarding_signals TEXT")
             if "onboarding_completed" not in cols:
                 conn.execute("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0")
+            if "last_seen_message_at" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN last_seen_message_at TEXT")
 
             # 2. conversations table columns
             cursor = conn.execute("PRAGMA table_info(conversations)")
@@ -316,11 +318,42 @@ class Database:
                 created_at TEXT NOT NULL
             )
             """)
+
+            # 15. typing_status table
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS typing_status (
+                conversation_id TEXT PRIMARY KEY,
+                is_typing INTEGER DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """)
             conn.commit()
         except Exception as e:
             logger.error(f"Error in Database._ensure_columns migrations: {e}", exc_info=True)
         finally:
             conn.close()
+
+    def mark_message_read(self, user_id: str, conversation_id: str, last_message_id: int):
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT sent_at FROM messages WHERE id = ? AND conversation_id = ?", (last_message_id, conversation_id)).fetchone()
+            timestamp = row["sent_at"] if row else datetime.now(timezone.utc).isoformat()
+            conn.execute("UPDATE users SET last_seen_message_at = ? WHERE id = ?", (timestamp, user_id))
+            conn.commit()
+
+    def update_typing_status(self, conversation_id: str, is_typing: bool):
+        now = datetime.now(timezone.utc).isoformat()
+        is_typing_int = 1 if is_typing else 0
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO typing_status (conversation_id, is_typing, updated_at) VALUES (?, ?, ?)",
+                (conversation_id, is_typing_int, now)
+            )
+            conn.commit()
+
+    def get_typing_status(self, conversation_id: str) -> bool:
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT is_typing FROM typing_status WHERE conversation_id = ?", (conversation_id,)).fetchone()
+            return bool(row["is_typing"]) if row else False
 
     def get_user(self, user_id: str) -> dict | None:
         with self.get_connection() as conn:

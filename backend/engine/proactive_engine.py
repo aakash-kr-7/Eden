@@ -101,6 +101,18 @@ class ProactiveEngine:
                     except Exception:
                         pass
 
+                # Constraint: User is currently typing
+                try:
+                    conv_row = conn.execute("SELECT id FROM conversations WHERE user_id = ? ORDER BY started_at DESC LIMIT 1", (user_id,)).fetchone()
+                    if conv_row:
+                        conv_id = conv_row["id"]
+                        ts_row = conn.execute("SELECT is_typing FROM typing_status WHERE conversation_id = ?", (conv_id,)).fetchone()
+                        if ts_row and ts_row["is_typing"]:
+                            logger.info(f"Skipping proactive evaluation for {user_id}: user is currently typing")
+                            return
+                except Exception as e:
+                    logger.error(f"Error checking user typing status in ProactiveEngine: {e}")
+
             # 2. Check if a proactive message is already queued for this user and unsent
             pending = conn.execute("""
                 SELECT COUNT(*) FROM proactive_queue
