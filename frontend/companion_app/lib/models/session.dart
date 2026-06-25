@@ -7,7 +7,7 @@
 // FILE: models/session.dart
 // PURPOSE: Session bootstrap payload returned on app open.
 
-import 'message.dart';
+import 'message_v2.dart';
 import 'partner.dart';
 
 class ProactiveMessage {

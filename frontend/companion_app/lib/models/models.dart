@@ -4,7 +4,7 @@
 // CONTEXT: Frontend data models.
 // ═══════════════════════════════════════════════════════════════════
 
-export 'message.dart';
+export 'message_v2.dart';
 export 'partner.dart';
 export 'session.dart';
 export 'memory.dart';
