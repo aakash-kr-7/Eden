@@ -59,27 +59,36 @@ class MemoriesNotifier extends StateNotifier<List<Memory>> {
   }
 
   Future<void> pin(int id) async {
+    final originalState = state;
+    bool found = false;
+    
+    state = state.map((m) {
+      if (m.id == id) {
+        found = true;
+        final nextPinned = !m.isPinned;
+        return Memory(
+          id: m.id,
+          memoryText: m.memoryText,
+          memoryType: m.memoryType,
+          salienceScore: nextPinned ? 0.99 : 0.5,
+          emotionalValence: m.emotionalValence,
+          isPinned: nextPinned,
+          recallCount: m.recallCount,
+          tags: m.tags,
+          createdAt: m.createdAt,
+        );
+      }
+      return m;
+    }).toList();
+
+    if (!found) return;
+
     try {
       final apiService = _ref.read(apiServiceProvider);
       await apiService.pinMemory(id);
-      state = state.map((m) {
-        if (m.id == id) {
-          return Memory(
-            id: m.id,
-            memoryText: m.memoryText,
-            memoryType: m.memoryType,
-            salienceScore: 0.99,
-            emotionalValence: m.emotionalValence,
-            isPinned: true,
-            recallCount: m.recallCount,
-            tags: m.tags,
-            createdAt: m.createdAt,
-          );
-        }
-        return m;
-      }).toList();
     } catch (e) {
-      debugPrint('Error pinning memory: $e');
+      debugPrint('Error toggling pin status for memory: $e');
+      state = originalState; // revert optimistically
     }
   }
 

@@ -216,8 +216,8 @@ async def pin_vault_memory(
     if not db.verify_memory_ownership(pair_id, id):
         raise HTTPException(status_code=404, detail="Memory not found")
         
-    new_salience = db.pin_memory(id, identity.uid)
-    return {"success": True, "pinned": True, "salience": new_salience}
+    is_pinned, new_salience = db.pin_memory(id, identity.uid)
+    return {"success": True, "pinned": is_pinned, "salience": new_salience}
 
 
 @router.delete("/memories")

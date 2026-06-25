@@ -8,6 +8,13 @@ enum MemoryType {
   fact,
   entity,
   onboarding,
+  feeling,
+  event,
+  preference,
+  struggle,
+  growth,
+  ritual,
+  joke,
 }
 
 class Memory {
@@ -63,6 +70,27 @@ class Memory {
         break;
       case 'onboarding':
         type = MemoryType.onboarding;
+        break;
+      case 'feeling':
+        type = MemoryType.feeling;
+        break;
+      case 'event':
+        type = MemoryType.event;
+        break;
+      case 'preference':
+        type = MemoryType.preference;
+        break;
+      case 'struggle':
+        type = MemoryType.struggle;
+        break;
+      case 'growth':
+        type = MemoryType.growth;
+        break;
+      case 'ritual':
+        type = MemoryType.ritual;
+        break;
+      case 'joke':
+        type = MemoryType.joke;
         break;
       default:
         type = MemoryType.general;

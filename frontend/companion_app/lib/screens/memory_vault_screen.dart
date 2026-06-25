@@ -1,10 +1,21 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: screens/memory_vault_screen.dart
+// PURPOSE: Browse and manage what the partner remembers about the user.
+// CONTEXT: Accessed from settings. Shows episodic memories by type.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../theme/eden_theme.dart';
+import '../theme/eden_colors.dart';
+import '../theme/eden_typography.dart';
 import '../models/models.dart';
+import '../providers/memory_provider.dart';
+import '../widgets/glass_card.dart';
+import '../widgets/shimmer_loader.dart';
+import '../widgets/pill_option.dart';
+import '../widgets/memory_card.dart';
 import '../main.dart';
 
 class MemoryVaultScreen extends ConsumerStatefulWidget {
@@ -14,12 +25,13 @@ class MemoryVaultScreen extends ConsumerStatefulWidget {
   ConsumerState<MemoryVaultScreen> createState() => _MemoryVaultScreenState();
 }
 
-class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with SingleTickerProviderStateMixin {
-  final List<Memory> _memories = [];
-  bool _isLoading = true;
-  String? _errorMessage;
+class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
+  final ScrollController _scrollController = ScrollController();
+  final Map<int, GlobalKey<MemoryCardState>> _cardKeys = {};
+  
+  bool _isInitialLoading = true;
   String? _partnerName;
-
+  int _totalMemoryCount = 0;
   String _selectedCategory = 'All';
 
   final List<String> _categories = [
@@ -34,143 +46,104 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
     'Jokes'
   ];
 
-  late final AnimationController _shimmerController;
-
   @override
   void initState() {
     super.initState();
-    _shimmerController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    )..repeat(reverse: true);
-    
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeScreen());
+    _scrollController.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _initializeData());
   }
 
   @override
   void dispose() {
-    _shimmerController.dispose();
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _initializeScreen() async {
-    await _loadPartnerName();
-    await _loadMemories();
+  Future<void> _initializeData() async {
+    await _loadProfileInfo();
+    if (mounted) {
+      await ref.read(memoriesProvider.notifier).load(null, 'recent');
+      setState(() {
+        _isInitialLoading = false;
+      });
+    }
   }
 
-  Future<void> _loadPartnerName() async {
+  Future<void> _loadProfileInfo() async {
     try {
       final apiService = ref.read(apiServiceProvider);
       final profile = await apiService.getProfile();
       if (mounted) {
         setState(() {
           _partnerName = profile['partner']?['name'] ?? 'Companion';
+          _totalMemoryCount = profile['partner']?['memory_count'] ?? 0;
         });
       }
     } catch (e) {
-      debugPrint('Failed to load partner details: $e');
+      debugPrint('Failed to load profile details: $e');
     }
   }
 
-  Future<void> _loadMemories() async {
+  void _onScroll() {
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final currentScroll = _scrollController.position.pixels;
+    if (maxScroll > 0 && currentScroll / maxScroll >= 0.8) {
+      ref.read(memoriesProvider.notifier).loadMore();
+    }
+  }
+
+  void _onCategorySelected(String category) {
+    if (_selectedCategory == category) return;
+    
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _selectedCategory = category;
+      _isInitialLoading = true;
     });
 
-    try {
-      final apiService = ref.read(apiServiceProvider);
-      // Map category labels to types expected by API
-      String? backendType;
-      if (_selectedCategory != 'All') {
-        // Map singular lowercase forms
-        final map = {
-          'Feelings': 'feeling',
-          'Facts': 'fact',
-          'Events': 'event',
-          'Preferences': 'preference',
-          'Struggles': 'struggle',
-          'Growth': 'growth',
-          'Rituals': 'ritual',
-          'Jokes': 'joke',
-        };
-        backendType = map[_selectedCategory];
-      }
-
-      final list = await apiService.getMemories(type: backendType, sort: 'recent');
-      
-      if (mounted) {
-        setState(() {
-          _memories.clear();
-          _memories.addAll(list);
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = 'failed to retrieve memories';
-        });
-      }
+    String? type;
+    if (category != 'All') {
+      final map = {
+        'Feelings': 'feeling',
+        'Facts': 'fact',
+        'Events': 'event',
+        'Preferences': 'preference',
+        'Struggles': 'struggle',
+        'Growth': 'growth',
+        'Rituals': 'ritual',
+        'Jokes': 'joke',
+      };
+      type = map[category];
     }
+    
+    ref.read(memoriesProvider.notifier).load(type, 'recent').then((_) {
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+        });
+      }
+    });
   }
 
   Future<void> _togglePin(Memory memory) async {
-    HapticFeedback.lightImpact();
-    
-    // Optimistic UI update
-    final int idx = _memories.indexWhere((m) => m.id == memory.id);
-    if (idx == -1) return;
-
-    final originalSalience = memory.salience;
-    // Pinned status is inferred from salience > 0.9 or can be set directly.
-    final updatedMemory = Memory(
-      id: memory.id,
-      content: memory.content,
-      memoryType: memory.memoryType,
-      // If currently pinned, lower salience to unpin; if not, raise it to pin.
-      salience: originalSalience > 0.9 ? 0.5 : 1.0,
-      emotionalValence: memory.emotionalValence,
-      tags: memory.tags,
-      isPhysical: memory.isPhysical,
-      createdAt: memory.createdAt,
-    );
-
-    setState(() {
-      _memories[idx] = updatedMemory;
-    });
-
-    try {
-      final apiService = ref.read(apiServiceProvider);
-      await apiService.pinMemory(memory.id);
-      // Reload to ensure DB state matches
-      _loadMemories();
-    } catch (e) {
-      // Revert on error
-      if (mounted) {
-        setState(() {
-          _memories[idx] = memory;
-        });
-      }
-    }
+    HapticFeedback.mediumImpact();
+    // MemoriesNotifier handles optimistic update & revert automatically
+    await ref.read(memoriesProvider.notifier).pin(memory.id);
   }
 
-  Future<void> _deleteMemory(Memory memory) async {
-    HapticFeedback.mediumImpact();
-    
-    final bool? confirm = await showGeneralDialog<bool>(
+  Future<bool?> _showDeleteConfirmation(BuildContext context) {
+    return showGeneralDialog<bool>(
       context: context,
       barrierDismissible: true,
       barrierLabel: 'confirm_delete',
-      barrierColor: Colors.black.withValues(alpha: 0.7),
+      barrierColor: Colors.black.withValues(alpha: 0.75),
       transitionDuration: const Duration(milliseconds: 250),
       pageBuilder: (context, anim1, anim2) {
         return Center(
           child: ScaleTransition(
             scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
             child: Dialog(
-              backgroundColor: EdenTheme.bgSurface,
+              backgroundColor: EdenColors.edenSurface,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
@@ -183,7 +156,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
                       style: GoogleFonts.cormorantGaramond(
                         fontSize: 22,
                         fontWeight: FontWeight.w400,
-                        color: EdenTheme.textPrimary,
+                        color: EdenColors.textPrimary,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -192,7 +165,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
                       'This moment will disappear from their presence and context forever.',
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 14,
-                        color: EdenTheme.textSecondary,
+                        color: EdenColors.textSecondary,
                         height: 1.45,
                       ),
                       textAlign: TextAlign.center,
@@ -207,7 +180,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
                               'Keep',
                               style: GoogleFonts.jost(
                                 fontSize: 15,
-                                color: EdenTheme.textSecondary,
+                                color: EdenColors.textSecondary,
                                 letterSpacing: 0.5,
                               ),
                             ),
@@ -218,13 +191,16 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(12),
                             child: Material(
-                              color: EdenTheme.destructive.withValues(alpha: 0.15),
+                              color: EdenColors.semanticError.withValues(alpha: 0.15),
                               child: InkWell(
                                 onTap: () => Navigator.of(context).pop(true),
                                 child: Container(
                                   height: 48,
                                   decoration: BoxDecoration(
-                                    border: Border.all(color: EdenTheme.destructive.withValues(alpha: 0.3), width: 0.8),
+                                    border: Border.all(
+                                      color: EdenColors.semanticError.withValues(alpha: 0.3), 
+                                      width: 0.8,
+                                    ),
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Center(
@@ -233,7 +209,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
                                       style: GoogleFonts.jost(
                                         fontSize: 15,
                                         fontWeight: FontWeight.w500,
-                                        color: EdenTheme.destructive,
+                                        color: EdenColors.semanticError,
                                         letterSpacing: 0.5,
                                       ),
                                     ),
@@ -253,75 +229,75 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
         );
       },
     );
-
-    if (confirm != true) return;
-
-    // Optimistic UI delete
-    final originalIdx = _memories.indexWhere((m) => m.id == memory.id);
-    if (originalIdx != -1) {
-      setState(() {
-        _memories.removeAt(originalIdx);
-      });
-    }
-
-    try {
-      final apiService = ref.read(apiServiceProvider);
-      await apiService.deleteMemory(memory.id);
-    } catch (e) {
-      // Revert optimistic delete on error
-      if (mounted && originalIdx != -1) {
-        _loadMemories();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to forget memory: $e'),
-            backgroundColor: EdenTheme.destructive,
-          ),
-        );
-      }
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final titleName = _partnerName ?? 'Companion';
+    final memories = ref.watch(memoriesProvider);
+    final partnerDisplay = _partnerName ?? 'Companion';
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 16),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-      ),
+      backgroundColor: EdenColors.edenSurface,
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Intimate Header
+            // Header: "What [partnerName] remembers" (CormorantGaramond 36sp, left-aligned)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              child: Text(
-                'What $titleName remembers',
-                style: GoogleFonts.cormorantGaramond(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w300,
-                  color: EdenTheme.textPrimary,
-                  letterSpacing: -0.2,
+              padding: const EdgeInsets.only(left: 24.0, right: 24.0, top: 48.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'What $partnerDisplay remembers',
+                    style: EdenTypography.displayLg.copyWith(
+                      color: EdenColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '$_totalMemoryCount memories total',
+                    style: EdenTypography.bodySm.copyWith(
+                      color: EdenColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Filter pills (horizontal scroll, no scrollbar)
+            Padding(
+              padding: const EdgeInsets.only(top: 9.0),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: _categories.map((cat) {
+                    final isSelected = _selectedCategory == cat;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      child: PillOption(
+                        text: cat,
+                        isSelected: isSelected,
+                        isFullWidth: false,
+                        onTap: () => _onCategorySelected(cat),
+                      ),
+                    );
+                  }).toList(),
                 ),
               ),
             ),
 
-            // Horizontal Category Filter Row
-            _buildCategoryRow(),
+            const SizedBox(height: 16),
 
-            // Memory Content Area
+            // Memory list
             Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 300),
-                child: _buildMainContent(),
-              ),
+              child: _isInitialLoading
+                  ? _buildShimmerLoadingState()
+                  : memories.isEmpty
+                      ? _buildEmptyState()
+                      : _buildMemoryList(memories),
             ),
           ],
         ),
@@ -329,297 +305,105 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> with Sing
     );
   }
 
-  Widget _buildCategoryRow() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: Row(
-        children: _categories.map((cat) {
-          final isSelected = _selectedCategory == cat;
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6.0),
-            child: GestureDetector(
-              onTap: () {
-                if (_selectedCategory != cat) {
-                  HapticFeedback.selectionClick();
-                  setState(() {
-                    _selectedCategory = cat;
-                  });
-                  _loadMemories();
-                }
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: isSelected ? EdenTheme.bgSurface : Colors.transparent,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isSelected ? EdenTheme.textPrimary.withValues(alpha: 0.08) : Colors.transparent,
-                    width: 0.8,
-                  ),
-                ),
-                child: Text(
-                  cat,
-                  style: GoogleFonts.jost(
-                    fontSize: 14,
-                    fontWeight: isSelected ? FontWeight.w500 : FontWeight.w300,
-                    color: isSelected ? EdenTheme.textPrimary : EdenTheme.textSecondary.withValues(alpha: 0.7),
-                    letterSpacing: 0.3,
-                  ),
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildMainContent() {
-    if (_isLoading) {
-      return _buildSkeletonLoader();
-    }
-
-    if (_errorMessage != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                _errorMessage!,
-                style: GoogleFonts.plusJakartaSans(color: EdenTheme.destructive, fontSize: 15),
-              ),
-              const SizedBox(height: 16),
-              TextButton(
-                onPressed: _initializeScreen,
-                child: Text(
-                  'retry',
-                  style: GoogleFonts.jost(color: EdenTheme.accentSecondary, letterSpacing: 1.0),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_memories.isEmpty) {
-      return Center(
-        key: const ValueKey('empty_vault'),
-        child: Padding(
-          padding: const EdgeInsets.all(32.0),
-          child: Text(
-            'Nothing here yet. Memories appear as your relationship grows.',
-            textAlign: TextAlign.center,
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 18,
-              fontWeight: FontWeight.w300,
-              color: EdenTheme.textSecondary.withValues(alpha: 0.65),
-              height: 1.45,
-            ),
-          ),
-        ),
-      );
-    }
-
+  Widget _buildMemoryList(List<Memory> memories) {
     return ListView.builder(
-      key: ValueKey('memory_list_$_selectedCategory'),
+      controller: _scrollController,
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      itemCount: _memories.length,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: memories.length,
       itemBuilder: (context, index) {
-        final memory = _memories[index];
-        return _buildMemoryCard(memory);
-      },
-    );
-  }
+        final memory = memories[index];
+        final key = _cardKeys.putIfAbsent(memory.id, () => GlobalKey<MemoryCardState>());
 
-  Widget _buildMemoryCard(Memory memory) {
-    final formattedDate = DateFormat('MMMM d, y').format(memory.createdAt);
-    final isPinned = memory.salience > 0.9;
-
-    return Dismissible(
-      key: Key(memory.id.toString()),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 24),
-        decoration: BoxDecoration(
-          color: EdenTheme.destructive.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: const Icon(
-          Icons.delete_outline_rounded,
-          color: EdenTheme.destructive,
-          size: 22,
-        ),
-      ),
-      confirmDismiss: (direction) async {
-        await _deleteMemory(memory);
-        return false; // Let the state handling inside _deleteMemory remove the item if confirmed
-      },
-      child: GestureDetector(
-        onLongPress: () => _togglePin(memory),
-        child: Container(
-          width: double.infinity,
-          margin: const EdgeInsets.only(bottom: 20),
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: const BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: Color(0x0F8A8799), // extremely subtle bottom divider line instead of outer card borders
-                width: 0.8,
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 12.0),
+          child: Dismissible(
+            key: Key(memory.id.toString()),
+            direction: DismissDirection.endToStart,
+            background: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Container(
+                alignment: Alignment.centerRight,
+                padding: const EdgeInsets.only(right: 24),
+                color: EdenColors.semanticError,
+                child: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Colors.white,
+                  size: 24,
+                ),
               ),
             ),
+            confirmDismiss: (direction) async {
+              // Play shake animation for confirmation feedback
+              final cardState = key.currentState;
+              if (cardState != null) {
+                await cardState.shake();
+              }
+              // Show dialog
+              if (!context.mounted) return false;
+              final confirm = await _showDeleteConfirmation(context);
+              if (confirm == true) {
+                ref.read(memoriesProvider.notifier).delete(memory.id);
+                setState(() {
+                  _totalMemoryCount = _totalMemoryCount > 0 ? _totalMemoryCount - 1 : 0;
+                });
+                return true;
+              }
+              return false;
+            },
+            child: MemoryCard(
+              key: key,
+              memory: memory,
+              onLongPress: () => _togglePin(memory),
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Memory text
-              Text(
-                memory.content,
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w400,
-                  color: EdenTheme.textPrimary.withValues(alpha: 0.9),
-                  height: 1.48,
-                ),
-              ),
-              const SizedBox(height: 12),
-              
-              // Meta Row
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Type label in text-tertiary
-                  Text(
-                    memory.memoryType.name.toLowerCase(),
-                    style: GoogleFonts.jost(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w400,
-                      color: EdenTheme.textTertiary,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                  
-                  const SizedBox(width: 12),
-                  
-                  // Dot separator
-                  Container(
-                    width: 2.5,
-                    height: 2.5,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: EdenTheme.textTertiary,
-                    ),
-                  ),
-                  
-                  const SizedBox(width: 12),
-                  
-                  // Date in text-tertiary
-                  Text(
-                    formattedDate,
-                    style: GoogleFonts.jost(
-                      fontSize: 11,
-                      color: EdenTheme.textTertiary,
-                    ),
-                  ),
-                  
-                  const Spacer(),
-                  
-                  // Pin Dot indicator
-                  if (isPinned)
-                    Container(
-                      width: 5,
-                      height: 5,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: EdenTheme.accentPrimary, // Small Presence Dot
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSkeletonLoader() {
-    return ListView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-      itemCount: 4,
-      itemBuilder: (context, index) {
-        return AnimatedBuilder(
-          animation: _shimmerController,
-          builder: (context, child) {
-            final double value = _shimmerController.value;
-            final double opacity = 0.08 + (value * 0.08);
-            return Container(
-              margin: const EdgeInsets.only(bottom: 24),
-              padding: const EdgeInsets.only(bottom: 16),
-              decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: Color(0x0A8A8799),
-                    width: 0.8,
-                  ),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 15,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: EdenTheme.textPrimary.withValues(alpha: opacity),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    height: 15,
-                    width: MediaQuery.of(context).size.width * 0.7,
-                    decoration: BoxDecoration(
-                      color: EdenTheme.textPrimary.withValues(alpha: opacity),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Container(
-                        height: 11,
-                        width: 50,
-                        decoration: BoxDecoration(
-                          color: EdenTheme.textTertiary.withValues(alpha: opacity * 1.5),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Container(
-                        height: 11,
-                        width: 70,
-                        decoration: BoxDecoration(
-                          color: EdenTheme.textTertiary.withValues(alpha: opacity * 1.5),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          },
         );
       },
+    );
+  }
+
+  Widget _buildShimmerLoadingState() {
+    return ListView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      itemCount: 4,
+      itemBuilder: (context, index) {
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: GlassCard(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const ShimmerLoader(width: 80, height: 12, borderRadius: 4),
+                const SizedBox(height: 12),
+                const ShimmerLoader(width: double.infinity, height: 16, borderRadius: 4),
+                const SizedBox(height: 6),
+                const ShimmerLoader(width: 200, height: 16, borderRadius: 4),
+                const SizedBox(height: 16),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: ShimmerLoader(width: 100, height: 12, borderRadius: 4),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Text(
+          'Nothing here yet.',
+          style: EdenTypography.bodySm.copyWith(
+            color: EdenColors.textSecondary,
+          ),
+        ),
+      ),
     );
   }
 }

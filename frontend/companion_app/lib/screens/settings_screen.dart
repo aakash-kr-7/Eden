@@ -1,10 +1,20 @@
+// ═══════════════════════════════════════════════════════════════════
+// FILE: screens/settings_screen.dart
+// PURPOSE: User preferences, relationship info, privacy controls, account.
+// CONTEXT: Accessed from chat screen via subtle settings icon.
+// ═══════════════════════════════════════════════════════════════════
+
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:share_plus/share_plus.dart';
 import '../theme/eden_theme.dart';
+import '../theme/eden_colors.dart';
+import '../widgets/glass_card.dart';
+import '../widgets/eden_button.dart';
 import '../main.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -20,20 +30,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
 
   // Connection data
   String _partnerName = '';
-  String _relationshipStage = '';
+  String _relationshipStage = 'new';
   int _daysTogether = 0;
   int _memoryCount = 0;
 
   // Preferences
   String _communicationPace = 'balanced';
-  bool _allowProactive = true;
-  bool _allowPush = true;
+  bool _notifProactive = true;
+  bool _notifFollowUp = true;
+  bool _notifAnniversaries = true;
+  bool _notifAbsenceCheck = true;
 
   // Account
   String _displayName = '';
-  String _email = '';
   bool _isEditingName = false;
   final _nameController = TextEditingController();
+
+  // Delete inline confirmation
+  bool _isDeleteExpanded = false;
+  final _deleteConfirmController = TextEditingController();
+  bool _isDeleteActive = false;
 
   late final AnimationController _bgController;
 
@@ -45,6 +61,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       duration: const Duration(seconds: 8),
     )..repeat(reverse: true);
     
+    _deleteConfirmController.addListener(() {
+      final matches = _deleteConfirmController.text.trim() == 'delete';
+      if (_isDeleteActive != matches) {
+        setState(() {
+          _isDeleteActive = matches;
+        });
+      }
+    });
+
     WidgetsBinding.instance.addPostFrameCallback((_) => _fetchProfileData());
   }
 
@@ -52,6 +77,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
   void dispose() {
     _bgController.dispose();
     _nameController.dispose();
+    _deleteConfirmController.dispose();
     super.dispose();
   }
 
@@ -68,12 +94,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       if (mounted) {
         final user = profile['user'] ?? {};
         final partner = profile['partner'] ?? {};
-        final prefs = profile['preferences'] ?? {};
         final primary = await apiService.getRelationshipSummary();
+        final notifPrefs = await apiService.getNotificationPreferences();
 
         setState(() {
           _displayName = user['display_name'] ?? user['preferred_name'] ?? 'User';
-          _email = user['email'] ?? '';
           _nameController.text = _displayName;
 
           _partnerName = partner['name'] ?? 'Companion';
@@ -81,9 +106,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
           _daysTogether = primary.daysTogether;
           _memoryCount = primary.totalMemories;
 
-          _communicationPace = prefs['proactive_cadence'] ?? 'balanced';
-          _allowProactive = prefs['allow_proactive_messages'] == 1 || prefs['allow_proactive_messages'] == true;
-          _allowPush = prefs['allow_push_notifications'] == 1 || prefs['allow_push_notifications'] == true;
+          _communicationPace = profile['preferences']?['proactive_cadence'] ?? 'balanced';
+          
+          _notifProactive = notifPrefs['proactive'] ?? true;
+          _notifFollowUp = notifPrefs['emotional_followup'] ?? true;
+          _notifAnniversaries = notifPrefs['anniversaries'] ?? true;
+          _notifAbsenceCheck = notifPrefs['absence_check'] ?? true;
 
           _isLoading = false;
         });
@@ -125,7 +153,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
   Future<void> _updateCommunicationPace(String pace) async {
     if (pace == _communicationPace) return;
     
-    // Optimistic state
     final previous = _communicationPace;
     setState(() => _communicationPace = pace);
     HapticFeedback.selectionClick();
@@ -143,31 +170,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     }
   }
 
-  Future<void> _updateToggles({bool? allowProactive, bool? allowPush}) async {
+  Future<void> _updateNotifPrefs({
+    bool? proactive,
+    bool? emotionalFollowup,
+    bool? anniversaries,
+  }) async {
     HapticFeedback.selectionClick();
+    final nextProactive = proactive ?? _notifProactive;
+    final nextFollowUp = emotionalFollowup ?? _notifFollowUp;
+    final nextAnniversaries = anniversaries ?? _notifAnniversaries;
     
-    final originalProactive = _allowProactive;
-    final originalPush = _allowPush;
+    final previousProactive = _notifProactive;
+    final previousFollowUp = _notifFollowUp;
+    final previousAnniversaries = _notifAnniversaries;
 
     setState(() {
-      if (allowProactive != null) _allowProactive = allowProactive;
-      if (allowPush != null) _allowPush = allowPush;
+      _notifProactive = nextProactive;
+      _notifFollowUp = nextFollowUp;
+      _notifAnniversaries = nextAnniversaries;
     });
 
     try {
       final apiService = ref.read(apiServiceProvider);
-      await apiService.updateProfile(
-        allowProactive: allowProactive,
-        allowPush: allowPush,
+      await apiService.updateNotificationPreferences(
+        proactive: nextProactive,
+        emotionalFollowup: nextFollowUp,
+        anniversaries: nextAnniversaries,
+        absenceCheck: _notifAbsenceCheck,
       );
     } catch (e) {
+      setState(() {
+        _notifProactive = previousProactive;
+        _notifFollowUp = previousFollowUp;
+        _notifAnniversaries = previousAnniversaries;
+      });
       if (mounted) {
-        setState(() {
-          _allowProactive = originalProactive;
-          _allowPush = originalPush;
-        });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update preferences: $e'), backgroundColor: EdenTheme.destructive),
+          SnackBar(content: Text('Failed to update notification preferences: $e'), backgroundColor: EdenTheme.destructive),
         );
       }
     }
@@ -188,193 +227,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     }
   }
 
-  Future<void> _handleClearMemories() async {
-    HapticFeedback.mediumImpact();
-    final bool? confirm = await _showOverlayConfirm(
-      title: 'Clear all memories?',
-      content: 'This will erase everything $_partnerName remembers about you. This process is permanent and cannot be undone.',
-      confirmLabel: 'Delete All',
-    );
-
-    if (confirm == true) {
-      setState(() => _isLoading = true);
-      try {
-        final apiService = ref.read(apiServiceProvider);
-        await apiService.deleteAllMemories();
-        await _fetchProfileData();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Memories cleared.'), backgroundColor: EdenTheme.success),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to clear memories: $e'), backgroundColor: EdenTheme.destructive),
-          );
-        }
-      }
-    }
-  }
-
   Future<void> _handleDeleteAccount() async {
     HapticFeedback.heavyImpact();
-    
-    // Multi-step confirmation
-    // Step 1: General warning
-    final bool? step1 = await _showOverlayConfirm(
-      title: 'Delete your account?',
-      content: 'This will completely destroy your profile and all pairings. $_partnerName and any other companions will forget you entirely. This is irreversible.',
-      confirmLabel: 'Delete account',
-    );
+    setState(() => _isLoading = true);
 
-    if (step1 != true) return;
-    if (!mounted) return;
-
-    // Step 2: Verification typing check
-    final confirmController = TextEditingController();
-    final bool? step2 = await showGeneralDialog<bool>(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'verify_delete',
-      barrierColor: Colors.black.withValues(alpha: 0.8),
-      transitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (context, anim1, anim2) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final text = confirmController.text.trim();
-            final isEnabled = text == 'DELETE';
-
-            return Center(
-              child: ScaleTransition(
-                scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-                child: Dialog(
-                  backgroundColor: EdenTheme.bgSurface,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Irreversible Action',
-                          style: GoogleFonts.cormorantGaramond(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w400,
-                            color: EdenTheme.destructive,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'Please type "DELETE" in capital letters below to permanently destroy your connection database.',
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 14,
-                            color: EdenTheme.textSecondary,
-                            height: 1.45,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 20),
-                        TextField(
-                          controller: confirmController,
-                          style: GoogleFonts.plusJakartaSans(color: EdenTheme.textPrimary, fontSize: 15),
-                          cursorColor: EdenTheme.destructive,
-                          textAlign: TextAlign.center,
-                          textCapitalization: TextCapitalization.characters,
-                          onChanged: (_) => setModalState(() {}),
-                          decoration: InputDecoration(
-                            hintText: 'DELETE',
-                            hintStyle: GoogleFonts.plusJakartaSans(color: EdenTheme.textTertiary, fontSize: 15),
-                            filled: true,
-                            fillColor: EdenTheme.bgPrimary.withValues(alpha: 0.4),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 28),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextButton(
-                                onPressed: () => Navigator.of(context).pop(false),
-                                child: Text(
-                                  'Cancel',
-                                  style: GoogleFonts.jost(
-                                    fontSize: 15,
-                                    color: EdenTheme.textSecondary,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
-                                child: Material(
-                                  color: isEnabled ? EdenTheme.destructive : EdenTheme.destructive.withValues(alpha: 0.1),
-                                  child: InkWell(
-                                    onTap: isEnabled ? () => Navigator.of(context).pop(true) : null,
-                                    child: Container(
-                                      height: 48,
-                                      decoration: BoxDecoration(
-                                        border: Border.all(
-                                          color: isEnabled 
-                                              ? EdenTheme.destructive 
-                                              : EdenTheme.destructive.withValues(alpha: 0.15), 
-                                          width: 0.8
-                                        ),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Center(
-                                        child: Text(
-                                          'Erase All',
-                                          style: GoogleFonts.jost(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w500,
-                                            color: isEnabled ? EdenTheme.bgPrimary : EdenTheme.destructive.withValues(alpha: 0.4),
-                                            letterSpacing: 0.5,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }
+    try {
+      final apiService = ref.read(apiServiceProvider);
+      await apiService.deleteAccount();
+      await ref.read(authServiceProvider).signOut();
+      if (mounted) {
+        context.go('/');
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete account: $e'), backgroundColor: EdenTheme.destructive),
         );
-      },
-    );
-
-    if (step2 == true && mounted) {
-      setState(() => _isLoading = true);
-      try {
-        final apiService = ref.read(apiServiceProvider);
-        await apiService.deleteAccount();
-        await ref.read(authServiceProvider).signOut();
-        if (mounted) {
-          context.go('/');
-        }
-      } catch (e) {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete account: $e'), backgroundColor: EdenTheme.destructive),
-          );
-        }
       }
     }
   }
@@ -391,9 +260,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       setState(() => _isLoading = false);
 
       if (mounted) {
-        // Show exported JSON data modal with copy option
         final jsonString = const JsonEncoder.withIndent('  ').convert(data);
-        _showExportViewer(jsonString);
+        await Share.share(jsonString, subject: 'My Eden Data Export');
       }
     } catch (e) {
       if (mounted) {
@@ -403,129 +271,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
         );
       }
     }
-  }
-
-  void _showExportViewer(String jsonString) {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'export_viewer',
-      barrierColor: Colors.black.withValues(alpha: 0.75),
-      transitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (context, anim1, anim2) {
-        return Center(
-          child: ScaleTransition(
-            scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-            child: Dialog(
-              backgroundColor: EdenTheme.bgSurface,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Your Compiled Database',
-                      style: GoogleFonts.cormorantGaramond(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w400,
-                        color: EdenTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'All profile variables, preferences, messages, and memories formatted as raw JSON.',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13,
-                        color: EdenTheme.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    // JSON content container
-                    Container(
-                      height: 320,
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF07080B),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: EdenTheme.textPrimary.withValues(alpha: 0.05)),
-                      ),
-                      child: SingleChildScrollView(
-                        child: Text(
-                          jsonString,
-                          style: TextStyle(
-                            fontFamily: 'Courier',
-                            fontSize: 11,
-                            color: EdenTheme.textPrimary.withValues(alpha: 0.75),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            child: Text(
-                              'Close',
-                              style: GoogleFonts.jost(
-                                fontSize: 15,
-                                color: EdenTheme.textSecondary,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Material(
-                              color: EdenTheme.bgElevated,
-                              child: InkWell(
-                                onTap: () {
-                                  Clipboard.setData(ClipboardData(text: jsonString));
-                                  HapticFeedback.lightImpact();
-                                  Navigator.of(context).pop();
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Copied database to clipboard.')),
-                                  );
-                                },
-                                child: Container(
-                                  height: 48,
-                                  decoration: BoxDecoration(
-                                    border: Border.all(color: EdenTheme.textPrimary.withValues(alpha: 0.08), width: 0.8),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      'Copy All',
-                                      style: GoogleFonts.jost(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w500,
-                                        color: EdenTheme.textPrimary,
-                                        letterSpacing: 0.5,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
   }
 
   Future<bool?> _showOverlayConfirm({
@@ -544,7 +289,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
           child: ScaleTransition(
             scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
             child: Dialog(
-              backgroundColor: EdenTheme.bgSurface,
+              backgroundColor: EdenColors.edenSurface,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
@@ -557,7 +302,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
                       style: GoogleFonts.cormorantGaramond(
                         fontSize: 22,
                         fontWeight: FontWeight.w400,
-                        color: EdenTheme.textPrimary,
+                        color: EdenColors.textPrimary,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -566,7 +311,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
                       content,
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 14,
-                        color: EdenTheme.textSecondary,
+                        color: EdenColors.textSecondary,
                         height: 1.45,
                       ),
                       textAlign: TextAlign.center,
@@ -581,7 +326,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
                               'Cancel',
                               style: GoogleFonts.jost(
                                 fontSize: 15,
-                                color: EdenTheme.textSecondary,
+                                color: EdenColors.textSecondary,
                                 letterSpacing: 0.5,
                               ),
                             ),
@@ -592,13 +337,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(12),
                             child: Material(
-                              color: EdenTheme.destructive.withValues(alpha: 0.15),
+                              color: EdenColors.semanticError.withValues(alpha: 0.15),
                               child: InkWell(
                                 onTap: () => Navigator.of(context).pop(true),
                                 child: Container(
                                   height: 48,
                                   decoration: BoxDecoration(
-                                    border: Border.all(color: EdenTheme.destructive.withValues(alpha: 0.3), width: 0.8),
+                                    border: Border.all(color: EdenColors.semanticError.withValues(alpha: 0.3), width: 0.8),
                                     borderRadius: BorderRadius.circular(12),
                                   ),
                                   child: Center(
@@ -607,7 +352,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
                                       style: GoogleFonts.jost(
                                         fontSize: 15,
                                         fontWeight: FontWeight.w500,
-                                        color: EdenTheme.destructive,
+                                        color: EdenColors.semanticError,
                                         letterSpacing: 0.5,
                                       ),
                                     ),
@@ -633,25 +378,25 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
-        backgroundColor: Color(0xFF0A0A0F),
+        backgroundColor: EdenColors.edenSurface,
         body: Center(
-          child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation(EdenTheme.accentPrimary)),
+          child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation(EdenColors.edenIris)),
         ),
       );
     }
 
     if (_errorMessage != null) {
       return Scaffold(
-        backgroundColor: const Color(0xFF0A0A0F),
+        backgroundColor: EdenColors.edenSurface,
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(_errorMessage!, style: GoogleFonts.plusJakartaSans(color: EdenTheme.destructive)),
+              Text(_errorMessage!, style: GoogleFonts.plusJakartaSans(color: EdenColors.semanticError)),
               const SizedBox(height: 16),
               TextButton(
                 onPressed: _fetchProfileData,
-                child: Text('retry', style: GoogleFonts.jost(color: EdenTheme.accentSecondary)),
+                child: Text('retry', style: GoogleFonts.jost(color: EdenColors.edenGold)),
               ),
             ],
           ),
@@ -660,7 +405,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0F),
+      backgroundColor: EdenColors.edenSurface,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -683,7 +428,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
                       center: Alignment(-0.6, -0.6 + (pulse * 0.1)),
                       radius: 1.4,
                       colors: [
-                        EdenTheme.accentPrimary.withValues(alpha: 0.03 + (pulse * 0.015)),
+                        EdenColors.presenceBlue.withValues(alpha: 0.03 + (pulse * 0.015)),
                         Colors.transparent,
                       ],
                     ),
@@ -694,7 +439,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
                         center: Alignment(0.6, 0.6 - (pulse * 0.1)),
                         radius: 1.5,
                         colors: [
-                          EdenTheme.accentSecondary.withValues(alpha: 0.02 + ((1 - pulse) * 0.015)),
+                          EdenColors.warmViolet.withValues(alpha: 0.02 + ((1 - pulse) * 0.015)),
                           Colors.transparent,
                         ],
                       ),
@@ -710,29 +455,64 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
               physics: const BouncingScrollPhysics(),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               children: [
-                // Display Name inline editor / Profile Area
-                _buildEditableProfileHeader(),
-                const SizedBox(height: 36),
+                // Header (Functional, no CormorantGaramond, PlusJakartaSans Bold, 24sp)
+                Text(
+                  'Settings',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: EdenColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 24),
 
-                // Connection details (display-only)
-                _buildSectionLabel('Your connection'),
+                // Section 1: "your connection"
+                _buildSectionLabel('your connection'),
                 _buildSettingsCard(
                   child: Column(
                     children: [
-                      _buildDisplayTile('Partner', _partnerName),
+                      SettingsRow(
+                        label: 'Partner',
+                        right: Text(
+                          _partnerName,
+                          style: GoogleFonts.plusJakartaSans(color: EdenColors.textSecondary),
+                        ),
+                      ),
                       _buildDivider(),
-                      _buildDisplayTile('Relationship stage', _relationshipStage),
+                      SettingsRow(
+                        label: 'Relationship stage',
+                        right: _buildStagePill(_relationshipStage),
+                      ),
                       _buildDivider(),
-                      _buildDisplayTile('Days together', '$_daysTogether days'),
+                      SettingsRow(
+                        label: 'Days together',
+                        right: Text(
+                          '$_daysTogether days',
+                          style: GoogleFonts.plusJakartaSans(color: EdenColors.textSecondary),
+                        ),
+                      ),
                       _buildDivider(),
-                      _buildDisplayTile('Memory count', '$_memoryCount items'),
+                      SettingsRow(
+                        label: 'Memory count',
+                        onTap: () => context.push('/memories').then((_) => _fetchProfileData()),
+                        right: Row(
+                          children: [
+                            Text(
+                              '$_memoryCount items',
+                              style: GoogleFonts.plusJakartaSans(color: EdenColors.textSecondary),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: EdenColors.textTertiary),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 12),
 
-                // Preferences
-                _buildSectionLabel('Preferences'),
+                // Section 2: "how you talk"
+                _buildSectionLabel('how you talk'),
                 _buildSettingsCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -744,79 +524,84 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
                           children: [
                             Text(
                               'Communication pace',
-                              style: GoogleFonts.jost(fontSize: 14, color: EdenTheme.textPrimary),
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 13,
+                                color: EdenColors.textSecondary,
+                              ),
                             ),
                             const SizedBox(height: 12),
-                            _buildPaceChips(),
+                            _buildSegmentedPaceSelector(),
                           ],
                         ),
                       ),
                       _buildDivider(),
-                      _buildSwitchTile(
-                        title: 'Proactive outreach',
-                        subtitle: 'Allow partner to check-in on their own timeline',
-                        value: _allowProactive,
-                        onChanged: (val) => _updateToggles(allowProactive: val),
+                      _buildToggleRow(
+                        title: 'Proactive',
+                        value: _notifProactive,
+                        onChanged: (val) => _updateNotifPrefs(proactive: val),
                       ),
                       _buildDivider(),
-                      _buildSwitchTile(
-                        title: 'Push notifications',
-                        subtitle: 'Get system notification alerts',
-                        value: _allowPush,
-                        onChanged: (val) => _updateToggles(allowPush: val),
+                      _buildToggleRow(
+                        title: 'Follow-ups',
+                        value: _notifFollowUp,
+                        onChanged: (val) => _updateNotifPrefs(emotionalFollowup: val),
+                      ),
+                      _buildDivider(),
+                      _buildToggleRow(
+                        title: 'Anniversaries',
+                        value: _notifAnniversaries,
+                        onChanged: (val) => _updateNotifPrefs(anniversaries: val),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 12),
 
-                // Privacy
-                _buildSectionLabel('Privacy'),
+                // Section 3: "your data"
+                _buildSectionLabel('your data'),
                 _buildSettingsCard(
                   child: Column(
                     children: [
-                      _buildActionTile(
-                        title: 'Your memories',
-                        subtitle: 'Browse the vault of shared moments',
-                        onTap: () {
-                          context.push('/memories').then((_) => _fetchProfileData());
-                        },
+                      SettingsRow(
+                        label: 'Your memories',
+                        onTap: () => context.push('/memories').then((_) => _fetchProfileData()),
+                        right: const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: EdenColors.textTertiary),
                       ),
                       _buildDivider(),
-                      _buildActionTile(
-                        title: 'Delete all memories',
-                        subtitle: 'Clear connection facts and knowledge history',
-                        onTap: _handleClearMemories,
-                        destructive: true,
-                      ),
-                      _buildDivider(),
-                      _buildActionTile(
-                        title: 'Export my data',
-                        subtitle: 'Extract database values as raw JSON',
+                      SettingsRow(
+                        label: 'Export my data',
                         onTap: _handleExportData,
+                        right: const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: EdenColors.textTertiary),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 12),
 
-                // Account
-                _buildSectionLabel('Account'),
+                // Section 4: "account"
+                _buildSectionLabel('account'),
                 _buildSettingsCard(
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildActionTile(
-                        title: 'Sign out',
-                        onTap: _handleSignOut,
-                      ),
+                      // Display Name Editable Row
+                      _buildEditableNameRow(),
                       _buildDivider(),
-                      _buildActionTile(
-                        title: 'Delete account',
-                        subtitle: 'Permanently destroy profile and connection pairing data',
-                        onTap: _handleDeleteAccount,
-                        destructive: true,
-                      ),
+                      
+                      // Delete everything expanding row
+                      _buildDeleteEverythingRow(),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Sign out button
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: EdenSecondaryButton(
+                    text: 'Sign out',
+                    textColor: EdenColors.textSecondary,
+                    onTap: _handleSignOut,
                   ),
                 ),
                 const SizedBox(height: 48),
@@ -830,13 +615,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
 
   Widget _buildSectionLabel(String label) {
     return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 12),
+      padding: const EdgeInsets.only(left: 4, bottom: 8, top: 12),
       child: Text(
         label,
         style: GoogleFonts.jost(
           fontSize: 12,
           fontWeight: FontWeight.w400,
-          color: EdenTheme.textSecondary.withValues(alpha: 0.65),
+          color: EdenColors.textSecondary.withValues(alpha: 0.65),
           letterSpacing: 1.0,
         ),
       ),
@@ -844,210 +629,114 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
   }
 
   Widget _buildSettingsCard({required Widget child}) {
+    return GlassCard(
+      child: child,
+    );
+  }
+
+  Widget _buildStagePill(String stage) {
+    Color color = EdenColors.textTertiary;
+    String label = stage.toLowerCase();
+    
+    if (label == 'familiar' || label == 'warming' || label == 'settled') {
+      color = EdenColors.edenSage;
+    } else if (label == 'close') {
+      color = EdenColors.edenIris;
+    } else if (label == 'bonded' || label == 'intimate') {
+      color = EdenColors.edenBlush;
+    }
+
     return Container(
-      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: EdenTheme.bgSurface.withValues(alpha: 0.40),
-        border: Border.all(color: EdenTheme.textPrimary.withValues(alpha: 0.04), width: 0.6),
-        borderRadius: BorderRadius.circular(20),
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999), // radius-pill
+        border: Border.all(color: color.withValues(alpha: 0.20), width: 1.0),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: child,
+      child: Text(
+        label,
+        style: GoogleFonts.jost(
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          color: color,
+          letterSpacing: 0.5,
+        ),
       ),
     );
   }
 
-  Widget _buildEditableProfileHeader() {
-    return Row(
-      children: [
-        CircleAvatar(
-          radius: 28,
-          backgroundColor: EdenTheme.bgSurface,
-          child: Text(
-            _displayName.isNotEmpty ? _displayName[0].toUpperCase() : 'U',
-            style: GoogleFonts.cormorantGaramond(
-              fontSize: 26,
-              fontWeight: FontWeight.w400,
-              color: EdenTheme.accentSecondary,
-            ),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: _isEditingName
-              ? Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _nameController,
-                        style: GoogleFonts.plusJakartaSans(color: EdenTheme.textPrimary, fontSize: 16),
-                        cursorColor: EdenTheme.accentPrimary,
-                        autofocus: true,
-                        decoration: const InputDecoration(
-                          border: UnderlineInputBorder(
-                            borderSide: BorderSide(color: EdenTheme.accentPrimary, width: 0.8),
-                          ),
-                          focusedBorder: UnderlineInputBorder(
-                            borderSide: BorderSide(color: EdenTheme.accentPrimary, width: 1.2),
-                          ),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.check, color: EdenTheme.success, size: 20),
-                      onPressed: _updateDisplayName,
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, color: EdenTheme.destructive, size: 20),
-                      onPressed: () {
-                        setState(() {
-                          _nameController.text = _displayName;
-                          _isEditingName = false;
-                        });
-                      },
-                    ),
-                  ],
-                )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          _displayName,
-                          style: GoogleFonts.plusJakartaSans(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w500,
-                            color: EdenTheme.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: () {
-                            setState(() => _isEditingName = true);
-                          },
-                          child: Icon(
-                            Icons.edit_outlined,
-                            size: 16,
-                            color: EdenTheme.textSecondary.withValues(alpha: 0.6),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _email,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 13,
-                        color: EdenTheme.textSecondary.withValues(alpha: 0.6),
-                      ),
-                    ),
-                  ],
-                ),
-        ),
-      ],
-    );
-  }
+  Widget _buildSegmentedPaceSelector() {
+    final paceOptions = [
+      {'label': 'Slow', 'value': 'gentle'},
+      {'label': 'Balanced', 'value': 'balanced'},
+      {'label': 'Quick', 'value': 'frequent'},
+    ];
 
-  Widget _buildDisplayTile(String title, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: EdenColors.glassLight,
+        borderRadius: BorderRadius.circular(14), // radius-md
+        border: Border.all(color: EdenColors.glassBorder, width: 1.0),
+      ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            title,
-            style: GoogleFonts.plusJakartaSans(fontSize: 14, color: EdenTheme.textSecondary),
-          ),
-          Text(
-            value,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: EdenTheme.textPrimary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPaceChips() {
-    final options = ['gentle', 'balanced', 'frequent'];
-    return Row(
-      children: options.map((opt) {
-        final isSelected = _communicationPace == opt;
-        return Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+        children: paceOptions.map((opt) {
+          final isSelected = _communicationPace == opt['value'];
+          return Expanded(
             child: GestureDetector(
-              onTap: () => _updateCommunicationPace(opt),
+              onTap: () => _updateCommunicationPace(opt['value']!),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 height: 38,
                 decoration: BoxDecoration(
-                  color: isSelected ? EdenTheme.bgSurface : Colors.transparent,
+                  color: isSelected ? EdenColors.edenIrisDim : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: isSelected ? EdenTheme.textPrimary.withValues(alpha: 0.08) : Colors.transparent,
-                    width: 0.8,
+                    color: isSelected ? EdenColors.edenIris : Colors.transparent,
+                    width: 1.0,
                   ),
                 ),
                 child: Center(
                   child: Text(
-                    opt,
+                    opt['label']!,
                     style: GoogleFonts.jost(
                       fontSize: 13,
-                      fontWeight: isSelected ? FontWeight.w500 : FontWeight.w300,
-                      color: isSelected ? EdenTheme.textPrimary : EdenTheme.textSecondary.withValues(alpha: 0.7),
+                      fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
+                      color: isSelected ? EdenColors.textAccent : EdenColors.textSecondary,
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        );
-      }).toList(),
+          );
+        }).toList(),
+      ),
     );
   }
 
-  Widget _buildSwitchTile({
+  Widget _buildToggleRow({
     required String title,
-    required String subtitle,
     required bool value,
     required ValueChanged<bool> onChanged,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: GoogleFonts.plusJakartaSans(fontSize: 14, color: EdenTheme.textPrimary),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    color: EdenTheme.textSecondary.withValues(alpha: 0.6),
-                  ),
-                ),
-              ],
+          Text(
+            title,
+            style: GoogleFonts.plusJakartaSans(
+              fontSize: 14,
+              color: EdenColors.textPrimary,
             ),
           ),
-          const SizedBox(width: 16),
           Switch.adaptive(
             value: value,
-            activeColor: EdenTheme.accentPrimary,
-            activeTrackColor: EdenTheme.accentPrimary.withValues(alpha: 0.3),
-            inactiveThumbColor: EdenTheme.textSecondary,
-            inactiveTrackColor: EdenTheme.bgPrimary,
+            activeColor: EdenColors.edenIris,
+            activeTrackColor: EdenColors.edenIrisDim,
+            inactiveThumbColor: EdenColors.textSecondary,
+            inactiveTrackColor: Colors.transparent,
             onChanged: onChanged,
           ),
         ],
@@ -1055,56 +744,171 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     );
   }
 
-  Widget _buildActionTile({
-    required String title,
-    String? subtitle,
-    required VoidCallback onTap,
-    bool destructive = false,
-  }) {
-    final titleColor = destructive ? EdenTheme.destructive : EdenTheme.textPrimary;
-    final subColor = destructive 
-        ? EdenTheme.destructive.withValues(alpha: 0.6) 
-        : EdenTheme.textSecondary.withValues(alpha: 0.6);
-
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+  Widget _buildEditableNameRow() {
+    if (_isEditingName) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
           children: [
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: GoogleFonts.plusJakartaSans(
-                      fontSize: 14,
-                      fontWeight: destructive ? FontWeight.w500 : FontWeight.w400,
-                      color: titleColor,
-                    ),
+              child: TextField(
+                controller: _nameController,
+                style: GoogleFonts.plusJakartaSans(color: EdenColors.textPrimary, fontSize: 14),
+                cursorColor: EdenColors.edenIris,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  border: UnderlineInputBorder(
+                    borderSide: BorderSide(color: EdenColors.edenIris, width: 0.8),
                   ),
-                  if (subtitle != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        color: subColor,
-                      ),
-                    ),
-                  ],
-                ],
+                  focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: EdenColors.edenIris, width: 1.2),
+                  ),
+                ),
               ),
             ),
-            Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 14,
-              color: destructive ? EdenTheme.destructive.withValues(alpha: 0.5) : EdenTheme.textTertiary,
+            IconButton(
+              icon: const Icon(Icons.check, color: EdenColors.semanticSuccess, size: 20),
+              onPressed: _updateDisplayName,
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: EdenColors.semanticError, size: 20),
+              onPressed: () {
+                setState(() {
+                  _nameController.text = _displayName;
+                  _isEditingName = false;
+                });
+              },
             ),
           ],
         ),
+      );
+    }
+
+    return SettingsRow(
+      label: 'Display name',
+      onTap: () => setState(() => _isEditingName = true),
+      right: Row(
+        children: [
+          Text(
+            _displayName,
+            style: GoogleFonts.plusJakartaSans(color: EdenColors.textSecondary),
+          ),
+          const SizedBox(width: 8),
+          const Icon(Icons.edit_outlined, size: 14, color: EdenColors.textTertiary),
+        ],
       ),
+    );
+  }
+
+  Widget _buildDeleteEverythingRow() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        GestureDetector(
+          onTap: () {
+            setState(() {
+              _isDeleteExpanded = !_isDeleteExpanded;
+              if (!_isDeleteExpanded) {
+                _deleteConfirmController.clear();
+              }
+            });
+          },
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Delete everything',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 14,
+                    color: EdenColors.textSecondary,
+                  ),
+                ),
+                Icon(
+                  _isDeleteExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                  size: 18,
+                  color: EdenColors.textSecondary,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_isDeleteExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'This will permanently erase all settings, connection details, and conversation history. This cannot be undone.',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    color: EdenColors.semanticError.withValues(alpha: 0.8),
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Type "delete" below to confirm:',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    color: EdenColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _deleteConfirmController,
+                  style: GoogleFonts.plusJakartaSans(color: EdenColors.textPrimary, fontSize: 14),
+                  cursorColor: EdenColors.semanticError,
+                  decoration: InputDecoration(
+                    hintText: 'delete',
+                    hintStyle: GoogleFonts.plusJakartaSans(color: EdenColors.textTertiary, fontSize: 14),
+                    filled: true,
+                    fillColor: EdenColors.edenVoid,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: const BorderSide(color: EdenColors.semanticError, width: 1.0),
+                      borderRadius: BorderRadius.circular(12.0),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: const BorderSide(color: EdenColors.edenRim, width: 1.0),
+                      borderRadius: BorderRadius.circular(12.0),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                GestureDetector(
+                  onTap: _isDeleteActive ? _handleDeleteAccount : null,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: _isDeleteActive ? EdenColors.semanticError : EdenColors.semanticError.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _isDeleteActive ? EdenColors.semanticError : EdenColors.semanticError.withValues(alpha: 0.3),
+                        width: 0.8,
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Erase All Data',
+                        style: GoogleFonts.jost(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                          color: _isDeleteActive ? Colors.white : EdenColors.semanticError.withValues(alpha: 0.4),
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
@@ -1112,7 +916,61 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     return Container(
       height: 0.6,
       width: double.infinity,
-      color: EdenTheme.textPrimary.withValues(alpha: 0.04),
+      color: EdenColors.glassBorder,
+    );
+  }
+}
+
+class SettingsRow extends StatefulWidget {
+  final String label;
+  final Widget? right;
+  final VoidCallback? onTap;
+  final bool isDestructive;
+
+  const SettingsRow({
+    super.key,
+    required this.label,
+    this.right,
+    this.onTap,
+    this.isDestructive = false,
+  });
+
+  @override
+  State<SettingsRow> createState() => _SettingsRowState();
+}
+
+class _SettingsRowState extends State<SettingsRow> {
+  bool _isTapped = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: widget.onTap != null ? (_) => setState(() => _isTapped = true) : null,
+      onTapUp: widget.onTap != null ? (_) {
+        setState(() => _isTapped = false);
+        HapticFeedback.lightImpact();
+        widget.onTap!();
+      } : null,
+      onTapCancel: widget.onTap != null ? () => setState(() => _isTapped = false) : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        height: 56.0,
+        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+        color: _isTapped ? EdenColors.glassLight : Colors.transparent,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              widget.label,
+              style: GoogleFonts.plusJakartaSans(
+                fontSize: 14,
+                color: widget.isDestructive ? EdenColors.semanticError : EdenColors.textPrimary,
+              ),
+            ),
+            if (widget.right != null) widget.right!,
+          ],
+        ),
+      ),
     );
   }
 }

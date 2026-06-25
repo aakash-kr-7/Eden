@@ -105,6 +105,7 @@ class EdenSecondaryButton extends StatefulWidget {
   final bool isLoading;
   final double? width;
   final Widget? icon;
+  final Color textColor;
 
   const EdenSecondaryButton({
     super.key,
@@ -113,6 +114,7 @@ class EdenSecondaryButton extends StatefulWidget {
     this.isLoading = false,
     this.width,
     this.icon,
+    this.textColor = EdenColors.textPrimary,
   });
 
   @override
@@ -140,12 +142,12 @@ class _EdenSecondaryButtonState extends State<EdenSecondaryButton> {
         ),
       ),
       child: widget.isLoading
-          ? const SizedBox(
+          ? SizedBox(
               width: 20.0,
               height: 20.0,
               child: CircularProgressIndicator(
                 strokeWidth: 2.0,
-                valueColor: AlwaysStoppedAnimation<Color>(EdenColors.textPrimary),
+                valueColor: AlwaysStoppedAnimation<Color>(widget.textColor),
               ),
             )
           : Row(
@@ -158,7 +160,7 @@ class _EdenSecondaryButtonState extends State<EdenSecondaryButton> {
                 ],
                 Text(
                   widget.text,
-                  style: EdenTypography.button.copyWith(color: EdenColors.textPrimary),
+                  style: EdenTypography.button.copyWith(color: widget.textColor),
                 ),
               ],
             ),

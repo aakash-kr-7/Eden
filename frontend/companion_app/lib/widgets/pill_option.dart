@@ -13,12 +13,14 @@ class PillOption extends StatelessWidget {
   final String text;
   final bool isSelected;
   final VoidCallback onTap;
+  final bool isFullWidth;
 
   const PillOption({
     super.key,
     required this.text,
     required this.isSelected,
     required this.onTap,
+    this.isFullWidth = true,
   });
 
   @override
@@ -31,7 +33,7 @@ class PillOption extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeInOut,
-        width: double.infinity,
+        width: isFullWidth ? double.infinity : null,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
         decoration: BoxDecoration(
           color: isSelected 
@@ -55,7 +57,9 @@ class PillOption extends StatelessWidget {
                 ? EdenColors.textAccent 
                 : EdenColors.textPrimary.withValues(alpha: 0.78),
           ),
-          child: Text(text),
+          child: text.contains(' · ') 
+              ? Text(text) 
+              : Center(widthFactor: isFullWidth ? null : 1.0, child: Text(text)),
         ),
       ),
     );

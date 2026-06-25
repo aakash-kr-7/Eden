@@ -411,6 +411,42 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> getNotificationPreferences() async {
+    try {
+      final response = await _dio.get('/api/notifications/preferences');
+      return response.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to get notification preferences',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
+  Future<void> updateNotificationPreferences({
+    required bool proactive,
+    required bool emotionalFollowup,
+    required bool anniversaries,
+    required bool absenceCheck,
+  }) async {
+    try {
+      await _dio.patch(
+        '/api/notifications/preferences',
+        data: {
+          'proactive': proactive,
+          'emotional_followup': emotionalFollowup,
+          'anniversaries': anniversaries,
+          'absence_check': absenceCheck,
+        },
+      );
+    } on DioException catch (e) {
+      throw ApiException(
+        e.message ?? 'Failed to update notification preferences',
+        e.response?.statusCode ?? 500,
+      );
+    }
+  }
+
   // Legacy/Session support aliases
   Future<Session> startSession() async {
     return loadSession();

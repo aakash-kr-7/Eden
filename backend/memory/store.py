@@ -92,13 +92,22 @@ class MemoryStore:
             """, (user_id, limit)).fetchall()
         return [dict(r) for r in rows]
     
-    def pin(self, db: sqlite3.Connection, memory_id: int, user_id: str):
-        """Pin a memory — it will never decay."""
+    def pin(self, db: sqlite3.Connection, memory_id: int, user_id: str) -> bool:
+        """Pin/unpin a memory."""
+        row = db.execute("SELECT is_pinned FROM episodic_memories WHERE id = ? AND user_id = ?", (memory_id, user_id)).fetchone()
+        is_pinned = 0
+        if row:
+            is_pinned = row["is_pinned"]
+        
+        new_pinned = 0 if is_pinned == 1 or is_pinned == True else 1
         db.execute("""
-            UPDATE episodic_memories SET is_pinned = 1, salience_score = MAX(salience_score, 0.85)
+            UPDATE episodic_memories 
+            SET is_pinned = ?, 
+                salience_score = CASE WHEN ? = 1 THEN MAX(salience_score, 0.85) ELSE salience_score END
             WHERE id = ? AND user_id = ?
-        """, (memory_id, user_id))
+        """, (new_pinned, new_pinned, memory_id, user_id))
         db.commit()
+        return new_pinned == 1
     
     def delete(self, db: sqlite3.Connection, memory_id: int, user_id: str):
         """Delete a memory and its vector + FTS entry."""
@@ -790,13 +799,13 @@ class Database:
         with self.get_connection() as conn:
             store.delete(conn, memory_id, user_id)
 
-    def pin_memory(self, memory_id: int, user_id: str) -> float:
+    def pin_memory(self, memory_id: int, user_id: str) -> tuple[bool, float]:
         store = MemoryStore()
         with self.get_connection() as conn:
-            store.pin(conn, memory_id, user_id)
+            is_pinned = store.pin(conn, memory_id, user_id)
             row = conn.execute("SELECT salience_score FROM episodic_memories WHERE id = ?", (memory_id,)).fetchone()
             salience = row["salience_score"] if row else 0.85
-            return salience
+            return is_pinned, salience
 
     def get_pending_proactive_events(self, user_id: str) -> list[dict]:
         with self.get_connection() as conn:
