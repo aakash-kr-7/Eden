@@ -93,7 +93,7 @@ class EdenTypography {
     fontWeight: FontWeight.w700,
     fontSize: 15.0,
     letterSpacing: 0.3,
-    color: Colors.white,
+    color: EdenColors.textPrimary,
     height: 1.2,
   );
 }

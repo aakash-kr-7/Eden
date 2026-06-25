@@ -11,9 +11,21 @@ import 'package:flutter/foundation.dart';
 import '../models/models.dart';
 import 'auth_service.dart';
 
+String _defaultBaseUrl() {
+  if (kIsWeb) {
+    return 'http://localhost:8001';
+  }
+
+  if (defaultTargetPlatform == TargetPlatform.android) {
+    return 'http://10.0.2.2:8001';
+  }
+
+  return 'http://localhost:8001';
+}
+
 const String kBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://localhost:8000',
+  defaultValue: '',
 );
 
 class ApiService {
@@ -21,7 +33,11 @@ class ApiService {
   final Dio _dio;
 
   ApiService(this._authService, {String? baseUrl})
-      : _dio = Dio(BaseOptions(baseUrl: baseUrl ?? kBaseUrl)) {
+      : _dio = Dio(
+          BaseOptions(
+            baseUrl: baseUrl ?? (kBaseUrl.isNotEmpty ? kBaseUrl : _defaultBaseUrl()),
+          ),
+        ) {
     // 1. Interceptor: Auto-inject Firebase ID token
     _dio.interceptors.add(
       InterceptorsWrapper(

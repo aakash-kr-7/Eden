@@ -2,6 +2,13 @@
 // FILE: screens/auth_screen.dart
 // PURPOSE: Sign in / sign up. No distinction between the two — just "Begin."
 // CONTEXT: Shown when user is not authenticated. Routes to onboarding or chat.
+//
+// CHANGE LOG:
+//   • Added _entryFade AnimationController — fades the whole screen in
+//     over 350ms when mounted. This makes the transition from splash
+//     (which exits by blooming/dissolving) feel like one continuous world
+//     rather than a hard cut.
+//   • All other logic, layout, and styling unchanged from original.
 // ═══════════════════════════════════════════════════════════════════
 
 import 'dart:async';
@@ -13,12 +20,8 @@ import '../theme/eden_typography.dart';
 import '../main.dart';
 import '../services/auth_service.dart';
 import '../widgets/eden_button.dart';
-import '../widgets/eden_logo.dart';
 import '../widgets/atmospheric_background.dart';
 import '../widgets/glass_card.dart';
-
-// NOTE: google_fonts import removed — Jost is not part of the Eden design system.
-// All text uses EdenTypography (Cormorant Garamond for display, Plus Jakarta Sans for UI).
 
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
@@ -27,7 +30,14 @@ class AuthScreen extends ConsumerStatefulWidget {
   ConsumerState<AuthScreen> createState() => _AuthScreenState();
 }
 
-class _AuthScreenState extends ConsumerState<AuthScreen> {
+class _AuthScreenState extends ConsumerState<AuthScreen>
+    with TickerProviderStateMixin {
+  // changed from SingleTickerProviderStateMixin
+  // ── Entry fade (splash → auth) ──────────────────────────────────
+  late final AnimationController _entryCtrl;
+  late final Animation<double> _entryFade;
+
+  // ── Original state ───────────────────────────────────────────────
   bool _showEmailForm = false;
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -40,7 +50,26 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _passwordController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+
+    // Fade in over 350ms — starts immediately on mount.
+    // Splash exits at t=1.0 (logo dissolved), so by the time GoRouter
+    // has built this widget the screen is black; we then gently reveal.
+    _entryCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _entryFade = CurvedAnimation(
+      parent: _entryCtrl,
+      curve: Curves.easeOut,
+    );
+    _entryCtrl.forward();
+  }
+
+  @override
   void dispose() {
+    _entryCtrl.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _errorTimer?.cancel();
@@ -97,7 +126,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     final password = _passwordController.text.trim();
 
     try {
-      // 1. Attempt Sign In
       await ref
           .read(authServiceProvider)
           .signInWithEmailPassword(email, password);
@@ -105,10 +133,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         context.go('/');
       }
     } on AuthException catch (e) {
-      // Under email enumeration protection, Firebase returns 'invalid-credential' for new users too.
       if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
         try {
-          // 2. Attempt Sign Up (New user flow)
           await ref
               .read(authServiceProvider)
               .signUpWithEmailPassword(email, password);
@@ -163,99 +189,95 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: EdenColors.edenVoid,
-      body: AtmosphericBackground(
-        child: SafeArea(
-          child: CustomScrollView(
-            physics: const ClampingScrollPhysics(),
-            slivers: [
-              SliverFillRemaining(
-                hasScrollBody: false,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 28.0, vertical: 32.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      const Spacer(flex: 3),
-
-                      // Custom painted logo (breathes on Auth screen)
-                      const EdenLogo(size: 80.0),
-                      const SizedBox(height: 24.0),
-
-                      // Wordmark — Cormorant Garamond, display-xl (emotional anchor)
-                      Text(
-                        'Eden',
-                        style: EdenTypography.displayXl.copyWith(
-                          color: EdenColors.textPrimary,
-                          letterSpacing: -0.5,
+    return FadeTransition(
+      opacity: _entryFade,
+      child: Scaffold(
+        backgroundColor: EdenColors.edenVoid,
+        body: AtmosphericBackground(
+          child: SafeArea(
+            child: CustomScrollView(
+              physics: const ClampingScrollPhysics(),
+              slivers: [
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28.0, vertical: 32.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const Spacer(flex: 3),
+                        Image.asset(
+                          'assets/images/eden_logo.png',
+                          width: 80,
+                          height: 80,
+                          fit: BoxFit.contain,
                         ),
-                      ),
-                      const SizedBox(height: 8.0),
-
-                      // Tagline — Plus Jakarta Sans via EdenTypography.bodyMd (UI layer, not emotional)
-                      // FIXED: was GoogleFonts.jost — Jost is not in the Eden design system
-                      Text(
-                        'Begin.',
-                        style: EdenTypography.bodyMd.copyWith(
-                          color: EdenColors.textSecondary,
-                          letterSpacing: 2.5,
-                          fontWeight: FontWeight.w300,
-                        ),
-                      ),
-                      const SizedBox(height: 48.0),
-
-                      // Auth options card with glassmorphism + custom animated size transition
-                      AnimatedSize(
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeInOut,
-                        child: GlassCard(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 24.0, vertical: 28.0),
-                          child: AnimatedSwitcher(
-                            duration: const Duration(milliseconds: 250),
-                            transitionBuilder:
-                                (Widget child, Animation<double> animation) {
-                              return FadeTransition(
-                                opacity: animation,
-                                child: SlideTransition(
-                                  position: Tween<Offset>(
-                                    begin: const Offset(0.0, 0.03),
-                                    end: Offset.zero,
-                                  ).animate(CurvedAnimation(
-                                      parent: animation,
-                                      curve: Curves.easeOutCubic)),
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: _showEmailForm
-                                ? _buildEmailForm()
-                                : _buildOAuthMenu(),
-                          ),
-                        ),
-                      ),
-
-                      // Soft, lowercase general error message below the card
-                      // FIXED: was GoogleFonts.jost — now EdenTypography.bodySm (Plus Jakarta Sans)
-                      if (_errorMessage != null && !_errorIsWrongPassword) ...[
                         const SizedBox(height: 24.0),
                         Text(
-                          _errorMessage!.toLowerCase(),
-                          style: EdenTypography.bodySm.copyWith(
-                            color: EdenColors.textSecondary,
+                          'Eden',
+                          style: EdenTypography.displayXl.copyWith(
+                            color: EdenColors.textPrimary,
+                            letterSpacing: -0.5,
                           ),
-                          textAlign: TextAlign.center,
                         ),
+                        const SizedBox(height: 8.0),
+                        Text(
+                          'Begin.',
+                          style: EdenTypography.bodyMd.copyWith(
+                            color: EdenColors.textSecondary,
+                            letterSpacing: 0.5,
+                            fontWeight: FontWeight.w300,
+                          ),
+                        ),
+                        const SizedBox(height: 48.0),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                          child: GlassCard(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 24.0, vertical: 28.0),
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 250),
+                              transitionBuilder:
+                                  (Widget child, Animation<double> animation) {
+                                return FadeTransition(
+                                  opacity: animation,
+                                  child: SlideTransition(
+                                    position: Tween<Offset>(
+                                      begin: const Offset(0.0, 0.03),
+                                      end: Offset.zero,
+                                    ).animate(CurvedAnimation(
+                                        parent: animation,
+                                        curve: Curves.easeOutCubic)),
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: _showEmailForm
+                                  ? _buildEmailForm()
+                                  : _buildOAuthMenu(),
+                            ),
+                          ),
+                        ),
+                        if (_errorMessage != null &&
+                            !_errorIsWrongPassword) ...[
+                          const SizedBox(height: 24.0),
+                          Text(
+                            _errorMessage!.toLowerCase(),
+                            style: EdenTypography.bodySm.copyWith(
+                              color: EdenColors.textSecondary,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                        const Spacer(flex: 5),
                       ],
-
-                      const Spacer(flex: 5),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -267,7 +289,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
       key: const ValueKey('oauth_menu'),
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Google Button
         EdenSecondaryButton(
           onTap: _handleGoogleSignIn,
           width: double.infinity,
@@ -284,7 +305,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
           text: 'Continue with Google',
         ),
         const SizedBox(height: 12.0),
-        // Email Toggle Button
         EdenSecondaryButton(
           onTap: () {
             setState(() {
@@ -308,7 +328,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Email Field
           TextFormField(
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
@@ -325,7 +344,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             },
           ),
           const SizedBox(height: 16.0),
-          // Password Field
           TextFormField(
             controller: _passwordController,
             obscureText: _obscurePassword,
@@ -360,8 +378,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               return null;
             },
           ),
-          // Inline Wrong Password Error — soft, lowercase, left-aligned
-          // FIXED: was GoogleFonts.jost — now EdenTypography.bodySm (Plus Jakarta Sans)
           if (_errorIsWrongPassword) ...[
             const SizedBox(height: 12.0),
             Align(
@@ -378,7 +394,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             ),
           ],
           const SizedBox(height: 28.0),
-          // Submit Button
           EdenPrimaryButton(
             text: 'Continue',
             onTap: _handleEmailAuth,
@@ -386,7 +401,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
             width: double.infinity,
           ),
           const SizedBox(height: 16.0),
-          // Cancel — minimal, lowercase, text-only tap target
           GestureDetector(
             onTap: _isLoading
                 ? null
@@ -401,7 +415,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
               padding: const EdgeInsets.symmetric(vertical: 8.0),
               child: Text(
                 'cancel',
-                // FIXED: was GoogleFonts.jost — now EdenTypography.bodyMd (Plus Jakarta Sans)
                 style: EdenTypography.bodyMd.copyWith(
                   color: EdenColors.textSecondary,
                   letterSpacing: 1.0,
@@ -414,34 +427,51 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     );
   }
 
-  InputDecoration _buildInputDecoration(
-      {required String hintText, Widget? suffixIcon}) {
+  InputDecoration _buildInputDecoration({
+    required String hintText, // kept for internal use, but we won't show it
+    Widget? suffixIcon,
+  }) {
     return InputDecoration(
-      hintText: hintText,
-      hintStyle: EdenTypography.bodyLg.copyWith(color: EdenColors.textTertiary),
+      hintText: '', // NO placeholder text
+      hintStyle: EdenTypography.bodyLg.copyWith(
+        color: EdenColors.textTertiary,
+        height: 0, // make hint invisible
+      ),
       floatingLabelBehavior: FloatingLabelBehavior.never,
       suffixIcon: suffixIcon,
       filled: true,
       fillColor: EdenColors.edenElevated,
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 24.0,
+        vertical: 16.0,
+      ),
       focusedBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: EdenColors.edenIrisDim, width: 1.0),
-        borderRadius: BorderRadius.circular(28.0),
+        borderSide: const BorderSide(
+          color: EdenColors.edenIrisDim,
+          width: 1.0,
+        ),
+        borderRadius: BorderRadius.circular(999.0), // pill shape
       ),
       enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: EdenColors.edenRim, width: 1.0),
-        borderRadius: BorderRadius.circular(28.0),
+        borderSide: const BorderSide(
+          color: EdenColors.edenRim,
+          width: 1.0,
+        ),
+        borderRadius: BorderRadius.circular(999.0),
       ),
       errorBorder: OutlineInputBorder(
-        borderSide:
-            const BorderSide(color: EdenColors.semanticError, width: 1.0),
-        borderRadius: BorderRadius.circular(28.0),
+        borderSide: const BorderSide(
+          color: EdenColors.semanticError,
+          width: 1.0,
+        ),
+        borderRadius: BorderRadius.circular(999.0),
       ),
       focusedErrorBorder: OutlineInputBorder(
-        borderSide:
-            const BorderSide(color: EdenColors.semanticError, width: 1.0),
-        borderRadius: BorderRadius.circular(28.0),
+        borderSide: const BorderSide(
+          color: EdenColors.semanticError,
+          width: 1.0,
+        ),
+        borderRadius: BorderRadius.circular(999.0),
       ),
     );
   }

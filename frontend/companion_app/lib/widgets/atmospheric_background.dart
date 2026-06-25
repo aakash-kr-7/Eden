@@ -83,7 +83,7 @@ class AtmosphericBackgroundPainter extends CustomPainter {
         radius1,
         [
           // Soft breathing opacity
-          EdenColors.presenceBlue.withValues(alpha: 0.045 + 0.015 * math.sin(angle1)),
+          EdenColors.presenceBlue.withOpacity(0.045 + 0.015 * math.sin(angle1)),
           Colors.transparent,
         ],
       );
@@ -101,7 +101,7 @@ class AtmosphericBackgroundPainter extends CustomPainter {
         center2,
         radius2,
         [
-          EdenColors.warmViolet.withValues(alpha: 0.035 + 0.012 * math.cos(angle2)),
+          EdenColors.warmViolet.withOpacity(0.035 + 0.012 * math.cos(angle2)),
           Colors.transparent,
         ],
       );
@@ -119,7 +119,7 @@ class AtmosphericBackgroundPainter extends CustomPainter {
         center3,
         radius3,
         [
-          EdenColors.humanWarmth.withValues(alpha: 0.025 + 0.01 * math.sin(angle3)),
+          EdenColors.humanWarmth.withOpacity(0.025 + 0.01 * math.sin(angle3)),
           Colors.transparent,
         ],
       );
