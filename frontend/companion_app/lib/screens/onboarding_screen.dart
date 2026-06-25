@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../theme/eden_colors.dart';
 import '../theme/eden_typography.dart';
@@ -18,6 +17,9 @@ import '../providers/onboarding_provider.dart';
 import '../widgets/pill_option.dart';
 import '../widgets/eden_button.dart';
 
+// NOTE: google_fonts import removed — GoogleFonts.plusJakartaSans() in _buildErrorPanel
+// replaced with EdenTypography.bodyMd (Plus Jakarta Sans via the design system).
+
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
 
@@ -25,7 +27,8 @@ class OnboardingScreen extends ConsumerStatefulWidget {
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with TickerProviderStateMixin {
+class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
+    with TickerProviderStateMixin {
   final _textController = TextEditingController();
   String? _selectedOption;
   bool _isAnimatingOut = false;
@@ -68,7 +71,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
   Future<void> _initOnboarding() async {
     final notifier = ref.read(onboardingProvider.notifier);
     await notifier.start();
-    
+
     final state = ref.read(onboardingProvider);
     if (state.isComplete && state.firstMessage != null) {
       _triggerRevealTimeline(state.firstMessage!);
@@ -126,9 +129,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
 
       // Check if we are complete
       final stateAfter = ref.read(onboardingProvider);
-      
+
       _outController.reset();
-      
+
       if (stateAfter.isComplete) {
         if (stateAfter.firstMessage != null) {
           _triggerRevealTimeline(stateAfter.firstMessage!);
@@ -169,7 +172,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
     // After 800ms, start letter-by-letter typewriter
     _typewriterTimer = Timer(const Duration(milliseconds: 800), () {
       int charIndex = 0;
-      _typewriterTimer = Timer.periodic(const Duration(milliseconds: 25), (timer) {
+      _typewriterTimer =
+          Timer.periodic(const Duration(milliseconds: 25), (timer) {
         if (!mounted) {
           timer.cancel();
           return;
@@ -197,7 +201,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: Colors.transparent, // Let Container handle it
+        backgroundColor: Colors.transparent,
         resizeToAvoidBottomInset: true,
         body: AnimatedSwitcher(
           duration: const Duration(milliseconds: 300),
@@ -205,7 +209,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
               ? Container(
                   key: const ValueKey('void_bg'),
                   color: EdenColors.edenVoid,
-                  child: _buildPartnerReveal(state.partnerName ?? 'Companion', state.firstMessage ?? ''),
+                  child: _buildPartnerReveal(state.partnerName ?? 'Companion',
+                      state.firstMessage ?? ''),
                 )
               : Container(
                   key: const ValueKey('onboarding_content'),
@@ -228,8 +233,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
                       SafeArea(
                         child: state.isLoading
                             ? (state.currentStep >= 8 || state.question == null
-                                ? const PulsingLoadingState(text: 'meeting them...')
-                                : const PulsingLoadingState(text: 'gathering presence...'))
+                                ? const PulsingLoadingState(
+                                    text: 'meeting them...')
+                                : const PulsingLoadingState(
+                                    text: 'gathering presence...'))
                             : _buildQuestionFlow(state),
                       ),
                     ],
@@ -245,12 +252,17 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
     if (q == null) return const SizedBox.shrink();
 
     final double opacity = _isAnimatingOut
-        ? (1.0 - CurvedAnimation(parent: _outController, curve: Curves.easeIn).value)
+        ? (1.0 -
+            CurvedAnimation(parent: _outController, curve: Curves.easeIn).value)
         : CurvedAnimation(parent: _inController, curve: Curves.easeOut).value;
 
     final double translateY = _isAnimatingOut
-        ? CurvedAnimation(parent: _outController, curve: Curves.easeIn).value * -8.0
-        : (1.0 - CurvedAnimation(parent: _inController, curve: Curves.easeOut).value) * 8.0;
+        ? CurvedAnimation(parent: _outController, curve: Curves.easeIn).value *
+            -8.0
+        : (1.0 -
+                CurvedAnimation(parent: _inController, curve: Curves.easeOut)
+                    .value) *
+            8.0;
 
     return Stack(
       children: [
@@ -269,7 +281,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Question text (centered horizontally, max width 320px)
+                    // Question text — displayMd (Cormorant Garamond 28sp), centered
                     Container(
                       constraints: const BoxConstraints(maxWidth: 320),
                       child: Text(
@@ -288,7 +300,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
                       child: q.type == 'open_text'
                           ? TextField(
                               controller: _textController,
-                              style: EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
+                              style: EdenTypography.bodyXl
+                                  .copyWith(color: EdenColors.textPrimary),
                               textAlign: TextAlign.center,
                               cursorColor: EdenColors.edenIris,
                               textCapitalization: TextCapitalization.sentences,
@@ -300,15 +313,19 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
                               },
                               decoration: const InputDecoration(
                                 border: UnderlineInputBorder(
-                                  borderSide: BorderSide(color: EdenColors.edenRim, width: 1.0),
+                                  borderSide: BorderSide(
+                                      color: EdenColors.edenRim, width: 1.0),
                                 ),
                                 enabledBorder: UnderlineInputBorder(
-                                  borderSide: BorderSide(color: EdenColors.edenRim, width: 1.0),
+                                  borderSide: BorderSide(
+                                      color: EdenColors.edenRim, width: 1.0),
                                 ),
                                 focusedBorder: UnderlineInputBorder(
-                                  borderSide: BorderSide(color: EdenColors.edenIris, width: 1.0),
+                                  borderSide: BorderSide(
+                                      color: EdenColors.edenIris, width: 1.0),
                                 ),
-                                contentPadding: EdgeInsets.symmetric(vertical: 8),
+                                contentPadding:
+                                    EdgeInsets.symmetric(vertical: 8),
                               ),
                             )
                           : Column(
@@ -336,7 +353,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
           ),
         ),
 
-        // Bottom navigation next arrow (Only appears after user has given a valid answer)
+        // Bottom navigation next arrow (only visible after valid answer)
         Positioned(
           bottom: MediaQuery.of(context).padding.bottom + 24,
           right: 24,
@@ -421,7 +438,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
             ),
           ),
 
-          // Bottom Center: Continue Button (Fades in when typewriter completes)
+          // Bottom Center: Continue (fades in when typewriter completes)
           Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
@@ -454,13 +471,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> with Ticker
       decoration: BoxDecoration(
         color: EdenColors.semanticError.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: EdenColors.semanticError.withValues(alpha: 0.2)),
+        border:
+            Border.all(color: EdenColors.semanticError.withValues(alpha: 0.2)),
       ),
+      // FIXED: was GoogleFonts.plusJakartaSans() — not using direct google_fonts calls.
+      // EdenTypography.bodyMd is already Plus Jakarta Sans at 14sp per the design system.
       child: Text(
         error.replaceAll('ApiException:', '').trim(),
-        style: GoogleFonts.plusJakartaSans(
+        style: EdenTypography.bodyMd.copyWith(
           color: EdenColors.semanticError.withValues(alpha: 0.9),
-          fontSize: 14,
         ),
         textAlign: TextAlign.center,
       ),
@@ -477,7 +496,8 @@ class PulsingLoadingState extends StatefulWidget {
   State<PulsingLoadingState> createState() => _PulsingLoadingStateState();
 }
 
-class _PulsingLoadingStateState extends State<PulsingLoadingState> with SingleTickerProviderStateMixin {
+class _PulsingLoadingStateState extends State<PulsingLoadingState>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<double> _scaleAnimation;
 
@@ -516,6 +536,11 @@ class _PulsingLoadingStateState extends State<PulsingLoadingState> with SingleTi
 }
 
 // ─── Atmospheric Background Helper ──────────────────────────────────
+// FIXED: replaced presenceBlue, warmViolet, humanWarmth — none exist in the Eden
+// design system. Mapped to nearest spec equivalents:
+//   presenceBlue → edenIris  (primary accent, represents presence/memory/thoughtfulness)
+//   warmViolet   → edenIris  (violet is iris — same emotional territory)
+//   humanWarmth  → edenBlush (blush = warmth, affection, intimacy per spec)
 class AtmosphericBackground extends StatefulWidget {
   const AtmosphericBackground({super.key});
 
@@ -523,7 +548,8 @@ class AtmosphericBackground extends StatefulWidget {
   State<AtmosphericBackground> createState() => _AtmosphericBackgroundState();
 }
 
-class _AtmosphericBackgroundState extends State<AtmosphericBackground> with SingleTickerProviderStateMixin {
+class _AtmosphericBackgroundState extends State<AtmosphericBackground>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override
@@ -552,7 +578,7 @@ class _AtmosphericBackgroundState extends State<AtmosphericBackground> with Sing
             // Solid base background
             Container(color: EdenColors.edenDepth),
 
-            // Orb 1: Top-Left (Presence Blue)
+            // Orb 1: Top-Left — edenIris (presence, memory, thoughtfulness)
             Positioned.fill(
               child: Container(
                 decoration: BoxDecoration(
@@ -560,7 +586,8 @@ class _AtmosphericBackgroundState extends State<AtmosphericBackground> with Sing
                     center: Alignment(-0.8, -0.7 + (pulse * 0.15)),
                     radius: 1.2,
                     colors: [
-                      EdenColors.presenceBlue.withValues(alpha: 0.04 + (pulse * 0.02)),
+                      EdenColors.edenIris
+                          .withValues(alpha: 0.04 + (pulse * 0.02)),
                       Colors.transparent,
                     ],
                   ),
@@ -568,7 +595,7 @@ class _AtmosphericBackgroundState extends State<AtmosphericBackground> with Sing
               ),
             ),
 
-            // Orb 2: Bottom-Right (Warm Violet)
+            // Orb 2: Bottom-Right — edenIris (warm violet, same emotional territory)
             Positioned.fill(
               child: Container(
                 decoration: BoxDecoration(
@@ -576,7 +603,8 @@ class _AtmosphericBackgroundState extends State<AtmosphericBackground> with Sing
                     center: Alignment(0.8, 0.7 - (pulse * 0.15)),
                     radius: 1.3,
                     colors: [
-                      EdenColors.warmViolet.withValues(alpha: 0.03 + ((1.0 - pulse) * 0.02)),
+                      EdenColors.edenIris
+                          .withValues(alpha: 0.03 + ((1.0 - pulse) * 0.02)),
                       Colors.transparent,
                     ],
                   ),
@@ -584,7 +612,7 @@ class _AtmosphericBackgroundState extends State<AtmosphericBackground> with Sing
               ),
             ),
 
-            // Orb 3: Bottom-Center (Human Warmth)
+            // Orb 3: Bottom-Center — edenBlush (human warmth, intimacy)
             Positioned.fill(
               child: Container(
                 decoration: BoxDecoration(
@@ -592,7 +620,8 @@ class _AtmosphericBackgroundState extends State<AtmosphericBackground> with Sing
                     center: Alignment(0.0, 0.9 + (pulse * 0.1)),
                     radius: 1.0,
                     colors: [
-                      EdenColors.humanWarmth.withValues(alpha: 0.02 + (pulse * 0.015)),
+                      EdenColors.edenBlush
+                          .withValues(alpha: 0.02 + (pulse * 0.015)),
                       Colors.transparent,
                     ],
                   ),

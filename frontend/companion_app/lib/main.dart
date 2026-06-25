@@ -18,7 +18,7 @@ import 'theme/eden_theme.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/onboarding_screen.dart';
-import 'screens/chat_screen_v2.dart';
+import 'screens/chat_screen.dart';
 import 'screens/memory_vault_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/auth_service.dart';
@@ -102,7 +102,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/chat',
-        builder: (context, state) => const ChatScreenV2(),
+        builder: (context, state) => const ChatScreen(),
       ),
       GoRoute(
         path: '/memories',

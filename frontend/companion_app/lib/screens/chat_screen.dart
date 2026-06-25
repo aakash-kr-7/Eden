@@ -1,12 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: screens/chat_screen.dart
 // PURPOSE: Primary conversation screen — the heart of Eden.
-// CONTEXT: This is where the relationship happens. One conversation, forever.
+// CONTEXT: Replaces chat_screen.dart with human texting support.
 // ═══════════════════════════════════════════════════════════════════
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:ui';
+import 'package:eden/widgets/typing_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,9 +18,8 @@ import '../theme/eden_animations.dart';
 import '../models/models.dart';
 import '../main.dart';
 import '../widgets/message_bubble.dart';
-import '../widgets/typing_indicator.dart';
 import '../widgets/glass_card.dart';
-import '../providers/chat_provider.dart';
+import '../providers/chat_provider_v3.dart';
 import '../providers/session_provider.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -30,7 +29,8 @@ class ChatScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObserver {
+class _ChatScreenState extends ConsumerState<ChatScreen>
+    with WidgetsBindingObserver {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
@@ -43,6 +43,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
   bool _noConnection = false;
   int? _firstProactiveMessageId;
   bool _showSendButton = false;
+  Timer? _typingTimer;
+  bool _lastSentTypingState = false;
 
   @override
   void initState() {
@@ -50,6 +52,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_onScroll);
     _inputController.addListener(_onInputChanged);
+    _inputFocusNode.addListener(_updateUserTypingState);
     WidgetsBinding.instance.addPostFrameCallback((_) => _initializeChat());
   }
 
@@ -58,6 +61,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_onScroll);
     _inputController.removeListener(_onInputChanged);
+    _inputFocusNode.removeListener(_updateUserTypingState);
+    _typingTimer?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
@@ -84,6 +89,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
           _headerOpacity = targetOpacity;
         });
       }
+
+      if (distanceFromBottom < 20.0) {
+        _markLastMessageAsRead();
+      }
     }
   }
 
@@ -93,6 +102,75 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       setState(() {
         _showSendButton = hasText;
       });
+    }
+    _updateUserTypingState();
+  }
+
+  void _updateUserTypingState() {
+    final hasFocus = _inputFocusNode.hasFocus;
+    final hasText = _inputController.text.trim().isNotEmpty;
+    final isTyping = hasFocus && hasText && !_isSending;
+
+    final currentTypingState = ref.read(isUserTypingProvider);
+    if (currentTypingState != isTyping) {
+      ref.read(isUserTypingProvider.notifier).state = isTyping;
+    }
+
+    if (isTyping) {
+      if (_typingTimer == null) {
+        _sendTypingStatus(true);
+        _typingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          _sendTypingStatus(true);
+        });
+      }
+    } else {
+      if (_typingTimer != null) {
+        _typingTimer!.cancel();
+        _typingTimer = null;
+        _sendTypingStatus(false);
+      }
+    }
+  }
+
+  Future<void> _sendTypingStatus(bool isTyping) async {
+    if (isTyping == _lastSentTypingState) return;
+    _lastSentTypingState = isTyping;
+
+    try {
+      final conversationId =
+          ref.read(sessionProvider).valueOrNull?.conversationId;
+      if (conversationId != null) {
+        await ref
+            .read(apiServiceProvider)
+            .updateTypingStatus(conversationId, isTyping);
+      }
+    } catch (e) {
+      debugPrint("Failed to send typing status: $e");
+    }
+  }
+
+  Future<void> _markLastMessageAsRead() async {
+    final messages = ref.read(messagesProvider);
+    if (messages.isEmpty) return;
+
+    final newestMsg = messages.first;
+    final lastMessageId = newestMsg.id;
+    final currentLastSeen = ref.read(lastSeenMessageIdProvider);
+
+    if (lastMessageId != currentLastSeen) {
+      ref.read(lastSeenMessageIdProvider.notifier).state = lastMessageId;
+
+      final conversationId =
+          ref.read(sessionProvider).valueOrNull?.conversationId;
+      if (conversationId != null) {
+        try {
+          await ref
+              .read(apiServiceProvider)
+              .markRead(conversationId, lastMessageId);
+        } catch (e) {
+          debugPrint("Failed to mark messages as read: $e");
+        }
+      }
     }
   }
 
@@ -137,7 +215,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
         final oldestProactive = session.unreadProactive.reduce(
           (a, b) => a.sentAt.isBefore(b.sentAt) ? a : b,
         );
-        _firstProactiveMessageId = int.tryParse(oldestProactive.id) ?? oldestProactive.id.hashCode;
+        _firstProactiveMessageId =
+            int.tryParse(oldestProactive.id) ?? oldestProactive.id.hashCode;
       }
 
       // Initialize provider state
@@ -186,7 +265,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
           if (!messages.any((m) => m.id == pmId)) {
             final pmMessage = Message(
               id: pmId,
-              conversationId: ref.read(sessionProvider).valueOrNull?.conversationId ?? '',
+              conversationId:
+                  ref.read(sessionProvider).valueOrNull?.conversationId ?? '',
               role: MessageRole.partner,
               content: pm.message,
               sentAt: pm.sentAt,
@@ -207,25 +287,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     if (retryText == null) {
       _inputController.clear();
       _showSendButton = false;
+      _updateUserTypingState();
     }
 
     _lastSentText = text;
     HapticFeedback.lightImpact();
 
-    final userMessage = Message(
-      id: DateTime.now().millisecondsSinceEpoch,
-      conversationId: ref.read(sessionProvider).valueOrNull?.conversationId ?? '',
-      role: MessageRole.user,
-      content: text,
-      sentAt: DateTime.now(),
-    );
-
     // Clear and unfocus
     FocusScope.of(context).unfocus();
-
-    // Optimistically add user message
-    await ref.read(messagesProvider.notifier).addMessage(userMessage);
-    _scrollToBottom(animated: true);
 
     setState(() {
       _isSending = true;
@@ -233,101 +302,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       _noConnection = false;
     });
 
-    // Show typing indicator
-    ref.read(isTypingProvider.notifier).state = true;
-    ref.read(streamingTextProvider.notifier).state = '';
-    _scrollToBottom(animated: true);
-
     try {
-      final apiService = ref.read(apiServiceProvider);
-      final conversationId = ref.read(sessionProvider).valueOrNull?.conversationId;
-
-      // Start SSE stream
-      final stream = apiService.sendMessage(conversationId, text);
-      String fullText = '';
-      Map<String, dynamic>? donePayload;
-
-      await for (final data in stream) {
-        try {
-          final jsonMap = jsonDecode(data) as Map<String, dynamic>;
-          final type = jsonMap['type'] as String?;
-          if (type == 'token') {
-            final token = jsonMap['text'] as String? ?? '';
-            fullText += token;
-            // Update streaming text
-            ref.read(streamingTextProvider.notifier).state = fullText;
-            _scrollToBottom(animated: false);
-          } else if (type == 'done') {
-            donePayload = jsonMap;
-          }
-        } catch (e) {
-          debugPrint('Error parsing stream: $e');
-        }
-      }
-
-      // Hide typing and streaming indicators
-      ref.read(streamingTextProvider.notifier).state = '';
-      ref.read(isTypingProvider.notifier).state = false;
-
-      if (donePayload != null) {
-        final convId = donePayload['conversation_id']?.toString() ?? conversationId ?? '';
-        final burstsData = donePayload['bursts'] as List<dynamic>?;
-        final delaysData = donePayload['delays'] as List<dynamic>?;
-
-        if (burstsData != null && burstsData.isNotEmpty) {
-          final List<String> bursts = burstsData.map((e) => e.toString()).toList();
-          final List<double> delays = delaysData != null
-              ? delaysData.map((e) => (e as num).toDouble()).toList()
-              : List.generate(bursts.length, (_) => 1.5);
-
-          // Show first burst immediately
-          final firstMessage = Message(
-            id: DateTime.now().millisecondsSinceEpoch,
-            conversationId: convId,
-            role: MessageRole.partner,
-            content: bursts[0],
-            sentAt: DateTime.now(),
-          );
-          await ref.read(messagesProvider.notifier).addMessage(firstMessage);
-          _scrollToBottom(animated: true);
-
-          // Play remaining bursts
-          for (int i = 1; i < bursts.length; i++) {
-            ref.read(isTypingProvider.notifier).state = true;
-            _scrollToBottom(animated: true);
-
-            // Stagger delay
-            await Future.delayed(Duration(milliseconds: (delays[i] * 1000).toInt()));
-
-            ref.read(isTypingProvider.notifier).state = false;
-
-            final burstMessage = Message(
-              id: DateTime.now().millisecondsSinceEpoch + i,
-              conversationId: convId,
-              role: MessageRole.partner,
-              content: bursts[i],
-              sentAt: DateTime.now(),
-            );
-            await ref.read(messagesProvider.notifier).addMessage(burstMessage);
-            _scrollToBottom(animated: true);
-          }
-        } else {
-          // Single message response
-          final partnerMessage = Message(
-            id: DateTime.now().millisecondsSinceEpoch,
-            conversationId: convId,
-            role: MessageRole.partner,
-            content: donePayload['full_text'] as String? ?? fullText,
-            sentAt: DateTime.now(),
-          );
-          await ref.read(messagesProvider.notifier).addMessage(partnerMessage);
-          _scrollToBottom(animated: true);
-        }
-      }
+      final conversationId =
+          ref.read(sessionProvider).valueOrNull?.conversationId;
+      await ref
+          .read(messagesProvider.notifier)
+          .sendMessage(conversationId, text);
+      _scrollToBottom(animated: true);
     } catch (e) {
       debugPrint("Error sending message: $e");
-      ref.read(streamingTextProvider.notifier).state = '';
-      ref.read(isTypingProvider.notifier).state = false;
       setState(() {
         _errorMessage = "something went wrong — tap to retry";
         _noConnection = true;
@@ -352,13 +335,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       if (_scrollController.hasClients) {
         final target = _scrollController.position.maxScrollExtent;
         if (animated) {
-          _scrollController.animateTo(
+          _scrollController
+              .animateTo(
             target,
             duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,
-          );
+          )
+              .then((_) {
+            _markLastMessageAsRead();
+          });
         } else {
           _scrollController.jumpTo(target);
+          _markLastMessageAsRead();
         }
       }
     });
@@ -369,6 +357,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
       return true; // oldest message
     }
     final current = messages[messages.length - 1 - index];
+
+    // Sub-bursts shouldn't get individual timestamps to match clean flow (e.g. WhatsApp)
+    if (current.isPartOfBurst &&
+        current.burstIndex != null &&
+        current.burstIndex! > 0) {
+      return false;
+    }
+
     final prev = messages[messages.length - index];
     final difference = current.sentAt.difference(prev.sentAt).abs();
     return difference.inHours >= 4;
@@ -411,7 +407,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
             child: SafeArea(
               child: Stack(
                 children: [
-                  _buildMessageList(messages, listCount, showTyping, showStreaming, hasError, partner),
+                  _buildMessageList(messages, listCount, showTyping,
+                      showStreaming, hasError, partner),
                   _buildPartnerHeader(partner),
                   if (_noConnection) _buildNoConnectionBanner(),
                   _buildInputArea(),
@@ -424,6 +421,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
     );
   }
 
+  // FIXED: removed online dot and typing status from header.
+  // Design spec: "Never shows 'online' or 'typing' status in header."
+  // Typing feedback lives in the message list (TypingIndicatorV2) only.
+  // Header subtitle shows partner name + mood exclusively.
   Widget _buildPartnerHeader(Partner? partner) {
     final partnerName = partner?.name ?? 'Eden';
     final partnerMood = _formatMood(partner?.currentMood);
@@ -455,12 +456,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
                       children: [
                         Text(
                           partnerName,
-                          style: EdenTypography.displayMd.copyWith(color: EdenColors.textPrimary),
+                          style: EdenTypography.displayMd
+                              .copyWith(color: EdenColors.textPrimary),
                         ),
                         const SizedBox(height: 2.0),
                         Text(
-                          "$partnerName · $partnerMood",
-                          style: EdenTypography.bodySm.copyWith(color: EdenColors.textTertiary),
+                          '$partnerName · $partnerMood',
+                          style: EdenTypography.bodySm.copyWith(
+                            color: EdenColors.textSecondary,
+                          ),
                         ),
                       ],
                     ),
@@ -469,14 +473,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
                       child: Row(
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.bookmark_border_rounded, size: 20),
-                            color: EdenColors.textSecondary.withValues(alpha: 0.6),
+                            icon: const Icon(Icons.bookmark_border_rounded,
+                                size: 20),
+                            color:
+                                EdenColors.textSecondary.withValues(alpha: 0.6),
                             onPressed: () => context.push('/memories'),
                             visualDensity: VisualDensity.compact,
                           ),
                           IconButton(
                             icon: const Icon(Icons.settings_outlined, size: 20),
-                            color: EdenColors.textSecondary.withValues(alpha: 0.6),
+                            color:
+                                EdenColors.textSecondary.withValues(alpha: 0.6),
                             onPressed: () => context.push('/settings'),
                             visualDensity: VisualDensity.compact,
                           ),
@@ -527,12 +534,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
             children: [
               Text(
                 partnerName,
-                style: EdenTypography.displayLg.copyWith(color: EdenColors.textPrimary),
+                style: EdenTypography.displayLg
+                    .copyWith(color: EdenColors.textPrimary),
               ),
               const SizedBox(height: 8.0),
               Text(
                 "say something",
-                style: EdenTypography.bodySm.copyWith(color: EdenColors.textTertiary),
+                style: EdenTypography.bodySm
+                    .copyWith(color: EdenColors.textTertiary),
               ),
             ],
           ),
@@ -578,11 +587,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
           final indicatorIndex = hasError ? listCount - 2 : listCount - 1;
           if (index == indicatorIndex) {
             if (showTyping) {
-              return const Align(
+              final isFollowUp = ref.watch(currentBurstIndexProvider) > 0;
+              final overrideDurationMs = ref.watch(typingDurationProvider);
+              final overrideDuration = overrideDurationMs != null
+                  ? Duration(milliseconds: overrideDurationMs)
+                  : null;
+              return Align(
                 alignment: Alignment.centerLeft,
                 child: Padding(
-                  padding: EdgeInsets.only(left: 20.0, top: 12.0, bottom: 12.0),
-                  child: TypingIndicator(
+                  padding: const EdgeInsets.only(
+                      left: 20.0, top: 12.0, bottom: 12.0),
+                  child: TypingIndicatorV2(
+                    isActive: true,
+                    isFollowUp: isFollowUp,
+                    overrideDuration: overrideDuration,
                     dotSize: 8.0,
                     spacing: 6.0,
                   ),
@@ -591,7 +609,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
             } else {
               final streamingText = ref.read(streamingTextProvider);
               return Container(
-                margin: const EdgeInsets.only(left: 20.0, right: 8.0, top: 4.0, bottom: 4.0),
+                margin: const EdgeInsets.only(
+                    left: 20.0, right: 8.0, top: 4.0, bottom: 4.0),
                 alignment: Alignment.centerLeft,
                 child: ConstrainedBox(
                   constraints: BoxConstraints(
@@ -606,7 +625,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
                       padding: const EdgeInsets.symmetric(vertical: 8.0),
                       child: Text(
                         streamingText,
-                        style: EdenTypography.bodyXl.copyWith(color: EdenColors.textPartner),
+                        style: EdenTypography.bodyXl
+                            .copyWith(color: EdenColors.textPartner),
                       ),
                     ),
                   ),
@@ -625,9 +645,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
         if (msg.id == _firstProactiveMessageId) {
           final diff = DateTime.now().difference(msg.sentAt);
           if (diff.inDays >= 1) {
-            customTimestampText = '${diff.inDays} ${diff.inDays == 1 ? "day" : "days"} ago';
+            customTimestampText =
+                '${diff.inDays} ${diff.inDays == 1 ? "day" : "days"} ago';
           } else if (diff.inHours >= 1) {
-            customTimestampText = '${diff.inHours} ${diff.inHours == 1 ? "hour" : "hours"} ago';
+            customTimestampText =
+                '${diff.inHours} ${diff.inHours == 1 ? "hour" : "hours"} ago';
           } else {
             customTimestampText = 'just now';
           }
@@ -654,16 +676,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
           duration: const Duration(milliseconds: 300),
           child: Center(
             child: GlassCard(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
               borderRadius: 14.0,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.cloud_off, size: 16.0, color: EdenColors.textSecondary),
+                  const Icon(Icons.cloud_off,
+                      size: 16.0, color: EdenColors.textSecondary),
                   const SizedBox(width: 8.0),
                   Text(
                     "no connection",
-                    style: EdenTypography.bodySm.copyWith(color: EdenColors.textSecondary),
+                    style: EdenTypography.bodySm
+                        .copyWith(color: EdenColors.textSecondary),
                   ),
                 ],
               ),
@@ -675,6 +700,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
   }
 
   Widget _buildInputArea() {
+    final isComposing = ref.watch(isComposingProvider);
+    final isTyping = ref.watch(isTypingProvider);
+    final partner = ref.watch(partnerProvider);
+    final partnerName = partner?.name.toLowerCase() ?? 'partner';
+
     return Positioned(
       bottom: 0,
       left: 0,
@@ -690,67 +720,104 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with WidgetsBindingObse
               top: 8.0,
               bottom: MediaQuery.of(context).padding.bottom + 8.0,
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: EdenColors.edenElevated,
-                      borderRadius: BorderRadius.circular(28.0),
-                    ),
-                    child: TextField(
-                      controller: _inputController,
-                      focusNode: _inputFocusNode,
-                      style: EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
-                      maxLines: 4,
-                      minLines: 1,
-                      cursorColor: EdenColors.edenIris,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: InputDecoration(
-                        filled: true,
-                        fillColor: EdenColors.edenElevated,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12.0),
-                        hintText: '',
-                        focusedBorder: OutlineInputBorder(
-                          borderSide: const BorderSide(color: EdenColors.edenIris, width: 1.0),
-                          borderRadius: BorderRadius.circular(28.0),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderSide: const BorderSide(color: EdenColors.edenRim, width: 1.0),
-                          borderRadius: BorderRadius.circular(28.0),
-                        ),
-                        border: OutlineInputBorder(
-                          borderSide: const BorderSide(color: EdenColors.edenRim, width: 1.0),
-                          borderRadius: BorderRadius.circular(28.0),
+                if (isComposing && isTyping)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 20.0, bottom: 6.0),
+                    child: FadeSlideIn(
+                      duration: const Duration(milliseconds: 150),
+                      offsetY: 4.0,
+                      child: Text(
+                        '$partnerName is typing...',
+                        style: EdenTypography.bodySm.copyWith(
+                          color: EdenColors.textSecondary,
+                          fontStyle: FontStyle.italic,
                         ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8.0),
-                AnimatedOpacity(
-                  opacity: _showSendButton ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 200),
-                  child: IgnorePointer(
-                    ignoring: !_showSendButton,
-                    child: GestureDetector(
-                      onTap: () => _sendMessage(),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
                       child: Container(
-                        width: 36,
-                        height: 36,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: EdenColors.edenIris,
+                        decoration: BoxDecoration(
+                          color: EdenColors.edenElevated,
+                          borderRadius: BorderRadius.circular(28.0),
                         ),
-                        child: const Icon(
-                          Icons.arrow_upward,
-                          color: Colors.white,
-                          size: 18,
+                        child: TextField(
+                          controller: _inputController,
+                          focusNode: _inputFocusNode,
+                          readOnly: isComposing,
+                          style: EdenTypography.bodyXl.copyWith(
+                            color: isComposing
+                                ? EdenColors.textSecondary
+                                : EdenColors.textPrimary,
+                          ),
+                          maxLines: 4,
+                          minLines: 1,
+                          cursorColor: EdenColors.edenIris,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: EdenColors.edenElevated,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 20.0, vertical: 12.0),
+                            hintText: '',
+                            // FIXED: focused border was edenIris (solid full-opacity violet).
+                            // Design spec says "focused: iris-dim" for input borders.
+                            focusedBorder: OutlineInputBorder(
+                              borderSide: const BorderSide(
+                                  color: EdenColors.edenIrisDim, width: 1.0),
+                              borderRadius: BorderRadius.circular(28.0),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderSide: const BorderSide(
+                                  color: EdenColors.edenRim, width: 1.0),
+                              borderRadius: BorderRadius.circular(28.0),
+                            ),
+                            disabledBorder: OutlineInputBorder(
+                              borderSide: const BorderSide(
+                                  color: EdenColors.edenRim, width: 1.0),
+                              borderRadius: BorderRadius.circular(28.0),
+                            ),
+                            border: OutlineInputBorder(
+                              borderSide: const BorderSide(
+                                  color: EdenColors.edenRim, width: 1.0),
+                              borderRadius: BorderRadius.circular(28.0),
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 8.0),
+                    AnimatedOpacity(
+                      opacity: (_showSendButton && !isComposing) ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 200),
+                      child: IgnorePointer(
+                        ignoring: !_showSendButton || isComposing,
+                        child: GestureDetector(
+                          onTap: () => _sendMessage(),
+                          child: Container(
+                            width: 36,
+                            height: 36,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: EdenColors.edenIris,
+                            ),
+                            child: const Icon(
+                              Icons.arrow_upward,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
