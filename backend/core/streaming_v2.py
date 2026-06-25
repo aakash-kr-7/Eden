@@ -25,7 +25,8 @@ async def stream_partner_response_v2(
     user_message_length: int,
     communication_rhythm: str = "measured",
     conversation_id: str = "",
-    on_done = None
+    on_done = None,
+    user_analysis: dict = None
 ) -> EventSourceResponse:
     """
     Streams partner response as realistic message bursts.
@@ -55,7 +56,8 @@ async def stream_partner_response_v2(
                 partner_energy=partner_energy,
                 user_message_length=user_message_length,
                 conversation_id=conversation_id,
-                communication_rhythm=communication_rhythm
+                communication_rhythm=communication_rhythm,
+                user_analysis=user_analysis
             )
             
             all_burst_texts = []

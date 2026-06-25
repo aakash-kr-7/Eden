@@ -16,7 +16,7 @@ from db.init import initialize_database
 from auth.firebase import initialize_firebase
 
 # Import routers
-from api.chat_v2 import router as chat_router
+from api.chat_v3 import router as chat_router
 from api.onboarding import router as onboarding_router
 from api.profile import router as profile_router
 from api.proactive import router as proactive_router
