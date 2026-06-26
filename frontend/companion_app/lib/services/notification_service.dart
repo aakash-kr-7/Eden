@@ -14,13 +14,16 @@ import 'api_service.dart';
 class NotificationService {
   final ApiService _apiService;
   final FirebaseMessaging _fcm = FirebaseMessaging.instance;
-  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
-  
+  final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
+
   // Controller to emit foreground notification messages for in-app banner display
-  final StreamController<RemoteMessage> _foregroundMessageController = StreamController<RemoteMessage>.broadcast();
-  
-  Stream<RemoteMessage> get foregroundMessages => _foregroundMessageController.stream;
-  
+  final StreamController<RemoteMessage> _foregroundMessageController =
+      StreamController<RemoteMessage>.broadcast();
+
+  Stream<RemoteMessage> get foregroundMessages =>
+      _foregroundMessageController.stream;
+
   // Callback to trigger navigation on notification tap
   void Function()? onNavigateToChat;
 
@@ -31,13 +34,15 @@ class NotificationService {
     await requestPermission();
 
     // 2. Setup Local Notifications for Foreground display
-    const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const DarwinInitializationSettings iosSettings =
+        DarwinInitializationSettings();
     const InitializationSettings initSettings = InitializationSettings(
       android: androidSettings,
       iOS: iosSettings,
     );
-    
+
     await _localNotifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
@@ -49,11 +54,13 @@ class NotificationService {
     // Create standard high importance notification channel for Android
     if (Platform.isAndroid) {
       await _localNotifications
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
           ?.createNotificationChannel(const AndroidNotificationChannel(
             'eden_chats',
             'Eden Messages',
-            description: 'Notifications for new messages from your Eden partner',
+            description:
+                'Notifications for new messages from your Eden partner',
             importance: Importance.max,
           ));
     }
@@ -96,7 +103,8 @@ class NotificationService {
         badge: true,
         sound: true,
       );
-      debugPrint('User granted notification permission: ${settings.authorizationStatus}');
+      debugPrint(
+          'User granted notification permission: ${settings.authorizationStatus}');
     } catch (e) {
       debugPrint('Error requesting notification permission: $e');
     }
@@ -104,7 +112,8 @@ class NotificationService {
 
   Future<void> _syncToken(String token) async {
     try {
-      final platformName = Platform.isAndroid ? 'android' : (Platform.isIOS ? 'ios' : 'web');
+      final platformName =
+          Platform.isAndroid ? 'android' : (Platform.isIOS ? 'ios' : 'web');
       await _apiService.registerFcmToken(
         token,
         platformName,
@@ -123,16 +132,17 @@ class NotificationService {
       notification.hashCode,
       notification.title,
       notification.body,
-      NotificationDetails(
+      const NotificationDetails(
         android: AndroidNotificationDetails(
           'eden_chats',
           'Eden Messages',
-          channelDescription: 'Notifications for new messages from your Eden partner',
+          channelDescription:
+              'Notifications for new messages from your Eden partner',
           importance: Importance.max,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
         ),
-        iOS: const DarwinNotificationDetails(
+        iOS: DarwinNotificationDetails(
           presentAlert: true,
           presentBadge: true,
           presentSound: true,

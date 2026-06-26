@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
-// ignore: unused_import
-import 'eden_colors.dart';
-
 class GlassTheme {
+  GlassTheme._();
+
+  // The current liquid_glass_renderer build does not expose an
+  // outlineIntensity setting. Keep outline strength as app-level constants for
+  // widgets that draw their own borders.
   static const double cardOutlineIntensity = 0.5;
   static const double prominentOutlineIntensity = 0.7;
   static const double buttonOutlineIntensity = 0.3;

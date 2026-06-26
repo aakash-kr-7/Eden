@@ -35,7 +35,8 @@ class ApiService {
   ApiService(this._authService, {String? baseUrl})
       : _dio = Dio(
           BaseOptions(
-            baseUrl: baseUrl ?? (kBaseUrl.isNotEmpty ? kBaseUrl : _defaultBaseUrl()),
+            baseUrl:
+                baseUrl ?? (kBaseUrl.isNotEmpty ? kBaseUrl : _defaultBaseUrl()),
           ),
         ) {
     // 1. Interceptor: Auto-inject Firebase ID token
@@ -44,7 +45,7 @@ class ApiService {
         onRequest: (options, handler) async {
           try {
             final token = await _authService.getCurrentIdToken();
-            if (token != null && token.isNotEmpty) {
+            if (token.isNotEmpty) {
               options.headers['Authorization'] = 'Bearer $token';
             }
           } catch (e) {
@@ -63,10 +64,10 @@ class ApiService {
           final requestOptions = error.requestOptions;
 
           int retryCount = requestOptions.extra['retry_count'] as int? ?? 0;
-          if (response != null &&
-              response.statusCode != null &&
-              response.statusCode! >= 500 &&
-              response.statusCode! < 600 &&
+          final statusCode = response?.statusCode;
+          if (statusCode != null &&
+              statusCode >= 500 &&
+              statusCode < 600 &&
               retryCount < 3) {
             retryCount++;
             requestOptions.extra['retry_count'] = retryCount;
@@ -136,7 +137,8 @@ class ApiService {
     }
   }
 
-  Future<List<Message>> getMessages(String? conversationId, {int? beforeId, int? limit}) async {
+  Future<List<Message>> getMessages(String? conversationId,
+      {int? beforeId, int? limit}) async {
     try {
       final response = await _dio.get(
         '/api/chat/messages',
@@ -146,7 +148,9 @@ class ApiService {
         },
       );
       final list = response.data as List<dynamic>? ?? const [];
-      return list.map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
+      return list
+          .map((e) => Message.fromJson(e as Map<String, dynamic>))
+          .toList();
     } on DioException catch (e) {
       throw ApiException(
         e.message ?? 'Failed to get messages',
@@ -158,7 +162,8 @@ class ApiService {
   Future<RelationshipSummary> getRelationshipSummary() async {
     try {
       final response = await _dio.get('/api/profile/relationship');
-      return RelationshipSummary.fromJson(response.data as Map<String, dynamic>? ?? const {});
+      return RelationshipSummary.fromJson(
+          response.data as Map<String, dynamic>? ?? const {});
     } on DioException catch (e) {
       throw ApiException(
         e.message ?? 'Failed to get relationship summary',
@@ -167,7 +172,8 @@ class ApiService {
     }
   }
 
-  Future<List<Memory>> getMemories({String? type, String? sort, int? page}) async {
+  Future<List<Memory>> getMemories(
+      {String? type, String? sort, int? page}) async {
     try {
       final response = await _dio.get(
         '/api/profile/memories',
@@ -179,7 +185,9 @@ class ApiService {
       );
       final rawData = response.data as Map<String, dynamic>? ?? const {};
       final list = rawData['memories'] as List<dynamic>? ?? const [];
-      return list.map((e) => Memory.fromJson(e as Map<String, dynamic>)).toList();
+      return list
+          .map((e) => Memory.fromJson(e as Map<String, dynamic>))
+          .toList();
     } on DioException catch (e) {
       throw ApiException(
         e.message ?? 'Failed to get memories',
@@ -214,7 +222,9 @@ class ApiService {
     try {
       final response = await _dio.get('/api/proactive/pending');
       final list = response.data as List<dynamic>? ?? const [];
-      return list.map((e) => ProactiveMessage.fromJson(e as Map<String, dynamic>)).toList();
+      return list
+          .map((e) => ProactiveMessage.fromJson(e as Map<String, dynamic>))
+          .toList();
     } on DioException catch (e) {
       throw ApiException(
         e.message ?? 'Failed to get pending proactive messages',
@@ -258,7 +268,8 @@ class ApiService {
     }
   }
 
-  Future<OnboardingStepResult> onboardingRespond(int step, dynamic response) async {
+  Future<OnboardingStepResult> onboardingRespond(
+      int step, dynamic response) async {
     try {
       final res = await _dio.post(
         '/api/onboarding/respond',
@@ -279,7 +290,8 @@ class ApiService {
   Future<OnboardingCompleteResult> onboardingComplete() async {
     try {
       final response = await _dio.post('/api/onboarding/complete');
-      return OnboardingCompleteResult.fromJson(response.data as Map<String, dynamic>);
+      return OnboardingCompleteResult.fromJson(
+          response.data as Map<String, dynamic>);
     } on DioException catch (e) {
       throw ApiException(
         e.message ?? 'Failed to complete onboarding',
@@ -326,7 +338,8 @@ class ApiService {
     );
   }
 
-  Future<OnboardingStepResult> completeOnboardingStep(int step, dynamic response) async {
+  Future<OnboardingStepResult> completeOnboardingStep(
+      int step, dynamic response) async {
     final res = await _dio.post(
       '/api/onboarding/respond',
       data: {
@@ -335,7 +348,7 @@ class ApiService {
       },
     );
     final data = res.data as Map<String, dynamic>;
-    
+
     final rawQuestion = data['question'];
     OnboardingQuestion? nextQuestion;
     if (rawQuestion is Map<String, dynamic>) {
@@ -347,7 +360,9 @@ class ApiService {
     return OnboardingStepResult(
       nextStep: data['next_step']?.toString() ?? data['step']?.toString(),
       question: nextQuestion,
-      isComplete: data['is_complete'] == true || data['is_complete'] == 1 || data['complete'] == true,
+      isComplete: data['is_complete'] == true ||
+          data['is_complete'] == 1 ||
+          data['complete'] == true,
     );
   }
 
@@ -378,10 +393,18 @@ class ApiService {
     if (data != null) {
       body.addAll(data);
     }
-    if (displayName != null) body['display_name'] = displayName;
-    if (communicationPace != null) body['communication_pace'] = communicationPace;
-    if (allowProactive != null) body['allow_proactive_messages'] = allowProactive;
-    if (allowPush != null) body['allow_push_notifications'] = allowPush;
+    if (displayName != null) {
+      body['display_name'] = displayName;
+    }
+    if (communicationPace != null) {
+      body['communication_pace'] = communicationPace;
+    }
+    if (allowProactive != null) {
+      body['allow_proactive_messages'] = allowProactive;
+    }
+    if (allowPush != null) {
+      body['allow_push_notifications'] = allowPush;
+    }
 
     try {
       await _dio.patch('/api/profile/me', data: body);

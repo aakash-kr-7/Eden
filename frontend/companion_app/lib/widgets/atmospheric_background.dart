@@ -1,14 +1,12 @@
-// ═══════════════════════════════════════════════════════════════════
 // FILE: widgets/atmospheric_background.dart
 // PURPOSE: A warm, breathing dark background widget with animated orbs.
-// CONTEXT: Replaces standard black/void backgrounds to create a soft,
-//          infinite, emotionally safe environment.
-// ═══════════════════════════════════════════════════════════════════
+// CONTEXT: Replaces standard black backgrounds with a soft atmosphere.
 
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+
+import 'package:eden/theme/eden_colors.dart';
 import 'package:flutter/material.dart';
-import '../theme/eden_colors.dart';
 
 class AtmosphericBackground extends StatefulWidget {
   final Widget? child;
@@ -26,7 +24,6 @@ class _AtmosphericBackgroundState extends State<AtmosphericBackground>
   @override
   void initState() {
     super.initState();
-    // 12-second continuous slow breathing animation loop
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 12),
@@ -64,13 +61,11 @@ class AtmosphericBackgroundPainter extends CustomPainter {
     final double w = size.width;
     final double h = size.height;
 
-    // 1. Draw solid very dark background base (eden-void tint)
     final Paint bgPaint = Paint()..color = EdenColors.edenVoid;
     canvas.drawRect(Rect.fromLTWH(0, 0, w, h), bgPaint);
 
     final double maxDimension = math.max(w, h);
 
-    // 2. Orb 1: Presence Blue (Top-Left quadrant, slow circular motion)
     final double angle1 = progress * 2.0 * math.pi;
     final Offset center1 = Offset(
       w * 0.15 + w * 0.08 * math.cos(angle1),
@@ -82,15 +77,14 @@ class AtmosphericBackgroundPainter extends CustomPainter {
         center1,
         radius1,
         [
-          // Soft breathing opacity
-          EdenColors.presenceBlue
-              .withValues(alpha: 0.045 + 0.015 * math.sin(angle1)),
+          EdenColors.presenceBlue.withValues(
+            alpha: 0.045 + 0.015 * math.sin(angle1),
+          ),
           Colors.transparent,
         ],
       );
     canvas.drawCircle(center1, radius1, paint1);
 
-    // 3. Orb 2: Warm Violet (Bottom-Right quadrant, opposite phase motion)
     final double angle2 = (progress + 0.33) * 2.0 * math.pi;
     final Offset center2 = Offset(
       w * 0.85 + w * 0.06 * math.sin(angle2),
@@ -102,14 +96,14 @@ class AtmosphericBackgroundPainter extends CustomPainter {
         center2,
         radius2,
         [
-          EdenColors.warmViolet
-              .withValues(alpha: 0.035 + 0.012 * math.cos(angle2)),
+          EdenColors.warmViolet.withValues(
+            alpha: 0.035 + 0.012 * math.cos(angle2),
+          ),
           Colors.transparent,
         ],
       );
     canvas.drawCircle(center2, radius2, paint2);
 
-    // 4. Orb 3: Human Warmth (Bottom-Center quadrant, slow sweep)
     final double angle3 = (progress + 0.66) * 2.0 * math.pi;
     final Offset center3 = Offset(
       w * 0.5 + w * 0.12 * math.cos(angle3),
@@ -121,8 +115,9 @@ class AtmosphericBackgroundPainter extends CustomPainter {
         center3,
         radius3,
         [
-          EdenColors.humanWarmth
-              .withValues(alpha: 0.025 + 0.01 * math.sin(angle3)),
+          EdenColors.humanWarmth.withValues(
+            alpha: 0.025 + 0.01 * math.sin(angle3),
+          ),
           Colors.transparent,
         ],
       );
