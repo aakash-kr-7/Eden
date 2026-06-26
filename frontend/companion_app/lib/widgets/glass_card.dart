@@ -1,12 +1,7 @@
-// ═══════════════════════════════════════════════════════════════════
-// FILE: widgets/glass_card.dart  
-// PURPOSE: Frosted glass card — the primary surface component in Eden.
-// CONTEXT: Used by memory cards, modals, and elevated surfaces everywhere.
-// ═══════════════════════════════════════════════════════════════════
-
-import 'dart:ui';
 import 'package:flutter/material.dart';
-import '../theme/eden_colors.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
+
+import '../theme/glass_theme.dart';
 
 class GlassCard extends StatelessWidget {
   final Widget child;
@@ -21,45 +16,35 @@ class GlassCard extends StatelessWidget {
     this.onTap,
     this.padding,
     this.margin,
-    this.borderRadius = 20.0, // radius-lg is 20px
+    this.borderRadius = 20.0,
   });
 
   @override
   Widget build(BuildContext context) {
-    Widget cardContent = ClipRRect(
-      borderRadius: BorderRadius.circular(borderRadius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20.0, sigmaY: 20.0), // blur-md is 20px
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: EdenColors.glassLight,
-            borderRadius: BorderRadius.circular(borderRadius),
-            border: Border.all(
-              color: EdenColors.glassBorder,
-              width: 1.0,
-            ),
-          ),
-          child: child,
-        ),
+    Widget content = LiquidGlass.withOwnLayer(
+      shape: LiquidRoundedSuperellipse(borderRadius: borderRadius),
+      settings: GlassTheme.card,
+      child: Padding(
+        padding: padding ?? EdgeInsets.zero,
+        child: child,
       ),
     );
 
     if (onTap != null) {
-      cardContent = GestureDetector(
+      content = InkWell(
         onTap: onTap,
-        behavior: HitTestBehavior.opaque,
-        child: cardContent,
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: content,
       );
     }
 
     if (margin != null) {
-      cardContent = Padding(
+      content = Padding(
         padding: margin!,
-        child: cardContent,
+        child: content,
       );
     }
 
-    return cardContent;
+    return content;
   }
 }

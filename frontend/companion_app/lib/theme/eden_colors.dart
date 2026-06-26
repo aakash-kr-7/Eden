@@ -1,54 +1,71 @@
-// ═══════════════════════════════════════════════════════════════════
-// FILE: theme/eden_colors.dart
-// PURPOSE: Complete Eden color system. Every color used in the app lives here.
-// CONTEXT: Imported by eden_theme.dart and any widget needing color access.
-// ═══════════════════════════════════════════════════════════════════
-
 import 'package:flutter/material.dart';
 
 class EdenColors {
   EdenColors._();
 
-  // ─── EdenBase (Backgrounds) ────────────────────────────────────────
-  static const Color edenVoid = Color(0xFF07070E);
-  static const Color edenDepth = Color(0xFF0D0D1A);
-  static const Color edenSurface = Color(0xFF13131F);
-  static const Color edenElevated = Color(0xFF1A1A2E);
-  static const Color edenRim = Color(0xFF252538);
+  // Core brand palette
+  static const Color black = Color(0xFF050507);
+  static const Color edenVoid = Color(0xFF070711);
+  static const Color edenDepth = Color(0xFF100D26);
+  static const Color edenSurface = Color(0xFF18132F);
+  static const Color edenElevated = Color(0xFF22183F);
+  static const Color deepPurple = Color(0xFF2D0B4E);
 
-  // ─── EdenGlass (The Core Aesthetic) ────────────────────────────────
-  static const Color glassLight = Color(0x0AFFFFFF);      // rgba(255, 255, 255, 0.04)
-  static const Color glassMedium = Color(0x12FFFFFF);     // rgba(255, 255, 255, 0.07)
-  static const Color glassStrong = Color(0x1CFFFFFF);     // rgba(255, 255, 255, 0.11)
-  static const Color glassBorder = Color(0x14FFFFFF);     // rgba(255, 255, 255, 0.08)
-  static const Color glassShimmer = Color(0x26FFFFFF);    // rgba(255, 255, 255, 0.15)
+  static const Color edenIris = Color(0xFF8B5CF6);
+  static const Color edenIrisDim = Color(0x338B5CF6);
+  static const Color edenIrisGlow = Color(0x668B5CF6);
+  static const Color edenBlush = Color(0xFFFF7C91);
+  static const Color edenGold = Color(0xFFFFD18A);
+  static const Color electricBlue = Color(0xFF00E5FF);
+  static const Color orangeGlow = Color(0xFFFF6D00);
+  static const Color amberGlow = Color(0xFFFFAB00);
+  static const Color softGlow = Color(0x40FFFFFF);
 
-  // ─── EdenAccent Palette (Diffused, Never Vivid) ────────────────────
-  static const Color edenIris = Color(0xFFA594F9);
-  static const Color edenIrisDim = Color(0x1EA594F9);     // rgba(165, 148, 249, 0.12)
-  static const Color edenIrisGlow = Color(0x40A594F9);    // rgba(165, 148, 249, 0.25)
-  static const Color edenBlush = Color(0xFFF4A7B9);
-  static const Color edenBlushDim = Color(0x1EF4A7B9);    // rgba(244, 167, 185, 0.12)
-  static const Color edenBlushGlow = Color(0x33F4A7B9);   // rgba(244, 167, 185, 0.20)
-  static const Color edenSage = Color(0xFF94C9B0);
-  static const Color edenSageDim = Color(0x1E94C9B0);     // rgba(148, 201, 176, 0.12)
-  static const Color edenSageGlow = Color(0x3394C9B0);    // rgba(148, 201, 176, 0.20)
-  static const Color edenGold = Color(0xFFE8C98A);
-  static const Color edenGoldDim = Color(0x1EE8C98A);    // rgba(232, 201, 138, 0.12)
+  // Atmospheric accents
+  static const Color presenceBlue = Color(0xFF55D6FF);
+  static const Color warmViolet = Color(0xFFA778FF);
+  static const Color humanWarmth = Color(0xFFFF9B80);
+  static const Color edenSage = Color(0xFF9AD9B5);
 
-  // ─── Eden Atmospheric Orbs (Breathing Backgrounds) ─────────────────
-  static const Color presenceBlue = Color(0xFF7DA2FF);   // presence blue - emotional core
-  static const Color warmViolet = Color(0xFFA78BFA);    // warm violet - vulnerability
-  static const Color humanWarmth = Color(0xFFF2B8A0);   // human warmth - subtle
+  // Text
+  static const Color textPrimary = Color(0xFFF8F5FF);
+  static const Color textSecondary = Color(0xB8F8F5FF);
+  static const Color textTertiary = Color(0x73F8F5FF);
+  static const Color textAccent = edenGold;
+  static const Color textPartner = Color(0xFFEDE4FF);
 
-  // ─── EdenText ──────────────────────────────────────────────────────
-  static const Color textPrimary = Color(0xFFF0EDF8);
-  static const Color textSecondary = Color(0xFF9895AE);
-  static const Color textTertiary = Color(0xFF514F6B);
-  static const Color textAccent = Color(0xFFA594F9);
-  static const Color textPartner = Color(0xFFE8E5F5);
+  // Glass
+  static const Color glassLight = Color(0x14FFFFFF);
+  static const Color glassMedium = Color(0x24FFFFFF);
+  static const Color glassStrong = Color(0x36FFFFFF);
+  static const Color glassBorder = Color(0x26FFFFFF);
+  static const Color glassShimmer = Color(0x45FFFFFF);
+  static const Color edenRim = glassBorder;
 
-  // ─── EdenSemantic ──────────────────────────────────────────────────
-  static const Color semanticError = Color(0xFFE87676);
-  static const Color semanticSuccess = Color(0xFF7ECBA1);
+  // Semantics
+  static const Color semanticError = Color(0xFFFF6B86);
+  static const Color semanticSuccess = Color(0xFF79E6A3);
+
+  static const LinearGradient backgroundGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [
+      edenVoid,
+      edenDepth,
+      deepPurple,
+      edenSurface,
+      black,
+    ],
+    stops: [0.0, 0.28, 0.55, 0.78, 1.0],
+  );
+
+  static const LinearGradient logoGlowGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [
+      edenGold,
+      edenBlush,
+      edenIris,
+    ],
+  );
 }

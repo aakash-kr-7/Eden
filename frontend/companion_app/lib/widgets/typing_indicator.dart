@@ -9,7 +9,8 @@ import 'package:flutter/material.dart';
 import '../theme/eden_colors.dart';
 
 class TypingIndicatorV2 extends StatefulWidget {
-  final Duration? overrideDuration; // If set, show typing for this long then auto-hide
+  final Duration?
+      overrideDuration; // If set, show typing for this long then auto-hide
   final bool isActive;
   final double dotSize;
   final double spacing;
@@ -28,7 +29,8 @@ class TypingIndicatorV2 extends StatefulWidget {
   State<TypingIndicatorV2> createState() => _TypingIndicatorV2State();
 }
 
-class _TypingIndicatorV2State extends State<TypingIndicatorV2> with TickerProviderStateMixin {
+class _TypingIndicatorV2State extends State<TypingIndicatorV2>
+    with TickerProviderStateMixin {
   late final List<AnimationController> _controllers;
   late final List<Animation<double>> _animations;
   late final AnimationController _fadeController;
@@ -39,7 +41,7 @@ class _TypingIndicatorV2State extends State<TypingIndicatorV2> with TickerProvid
   @override
   void initState() {
     super.initState();
-    
+
     // Overall entrance fade in (200ms)
     _fadeController = AnimationController(
       vsync: this,
@@ -95,7 +97,8 @@ class _TypingIndicatorV2State extends State<TypingIndicatorV2> with TickerProvid
 
   void _startTimer() {
     _stopTimer();
-    final duration = widget.overrideDuration ?? const Duration(milliseconds: 2000);
+    final duration =
+        widget.overrideDuration ?? const Duration(milliseconds: 2000);
     _autoHideTimer = Timer(duration, () {
       if (mounted) {
         setState(() {

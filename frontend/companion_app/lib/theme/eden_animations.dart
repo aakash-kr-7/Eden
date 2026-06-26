@@ -46,7 +46,8 @@ class FadeSlideIn extends StatefulWidget {
   State<FadeSlideIn> createState() => _FadeSlideInState();
 }
 
-class _FadeSlideInState extends State<FadeSlideIn> with SingleTickerProviderStateMixin {
+class _FadeSlideInState extends State<FadeSlideIn>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<double> _opacityAnimation;
   late final Animation<double> _translationAnimation;
@@ -64,7 +65,8 @@ class _FadeSlideInState extends State<FadeSlideIn> with SingleTickerProviderStat
       CurvedAnimation(parent: _controller, curve: widget.curve),
     );
 
-    _translationAnimation = Tween<double>(begin: widget.offsetY, end: 0.0).animate(
+    _translationAnimation =
+        Tween<double>(begin: widget.offsetY, end: 0.0).animate(
       CurvedAnimation(parent: _controller, curve: widget.curve),
     );
 
@@ -123,7 +125,8 @@ class PulseAnimation extends StatefulWidget {
   State<PulseAnimation> createState() => _PulseAnimationState();
 }
 
-class _PulseAnimationState extends State<PulseAnimation> with SingleTickerProviderStateMixin {
+class _PulseAnimationState extends State<PulseAnimation>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<double> _scaleAnimation;
 
@@ -202,7 +205,8 @@ class BreathingBackground extends StatefulWidget {
   State<BreathingBackground> createState() => _BreathingBackgroundState();
 }
 
-class _BreathingBackgroundState extends State<BreathingBackground> with SingleTickerProviderStateMixin {
+class _BreathingBackgroundState extends State<BreathingBackground>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override
@@ -310,6 +314,7 @@ class _AtmosphericPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _AtmosphericPainter oldDelegate) {
-    return oldDelegate.progress != progress || oldDelegate.baseColor != baseColor;
+    return oldDelegate.progress != progress ||
+        oldDelegate.baseColor != baseColor;
   }
 }

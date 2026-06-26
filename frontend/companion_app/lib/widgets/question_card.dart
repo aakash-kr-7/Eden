@@ -154,15 +154,21 @@ class _QuestionCardState extends State<QuestionCard> {
               onSubmitted: (_) => _submitTextAnswer(),
               decoration: InputDecoration(
                 border: const UnderlineInputBorder(
-                  borderSide: BorderSide(color: EdenTheme.accentPrimary, width: 1.0),
+                  borderSide:
+                      BorderSide(color: EdenTheme.accentPrimary, width: 1.0),
                 ),
                 enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: EdenTheme.accentPrimary.withValues(alpha: 0.4), width: 1.0),
+                  borderSide: BorderSide(
+                      color: EdenTheme.accentPrimary.withValues(alpha: 0.4),
+                      width: 1.0),
                 ),
                 focusedBorder: const UnderlineInputBorder(
-                  borderSide: BorderSide(color: EdenTheme.accentPrimary, width: 2.0),
+                  borderSide:
+                      BorderSide(color: EdenTheme.accentPrimary, width: 2.0),
                 ),
-                hintText: widget.config.optional ? 'optional (tap arrow to skip)' : 'type your answer...',
+                hintText: widget.config.optional
+                    ? 'optional (tap arrow to skip)'
+                    : 'type your answer...',
                 hintStyle: GoogleFonts.plusJakartaSans(
                   color: EdenTheme.textSecondary.withValues(alpha: 0.4),
                   fontSize: 16,
@@ -175,7 +181,9 @@ class _QuestionCardState extends State<QuestionCard> {
             IconButton(
               icon: Icon(
                 Icons.arrow_forward_rounded,
-                color: _isValid ? EdenTheme.accentPrimary : EdenTheme.textSecondary.withValues(alpha: 0.2),
+                color: _isValid
+                    ? EdenTheme.accentPrimary
+                    : EdenTheme.textSecondary.withValues(alpha: 0.2),
                 size: 32,
               ),
               onPressed: _isValid && !_isSubmitting ? _submitTextAnswer : null,

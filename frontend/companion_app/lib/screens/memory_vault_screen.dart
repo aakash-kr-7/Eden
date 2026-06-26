@@ -1,22 +1,13 @@
-// ═══════════════════════════════════════════════════════════════════
-// FILE: screens/memory_vault_screen.dart
-// PURPOSE: Browse and manage what the partner remembers about the user.
-// CONTEXT: Accessed from settings. Shows episodic memories by type.
-// ═══════════════════════════════════════════════════════════════════
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../theme/eden_colors.dart';
-import '../theme/eden_typography.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
+
+import '../main.dart';
 import '../models/models.dart';
 import '../providers/memory_provider.dart';
-import '../widgets/glass_card.dart';
-import '../widgets/shimmer_loader.dart';
-import '../widgets/pill_option.dart';
-import '../widgets/memory_card.dart';
-import '../main.dart';
+import '../theme/eden_colors.dart';
+import '../theme/glass_theme.dart';
 
 class MemoryVaultScreen extends ConsumerStatefulWidget {
   const MemoryVaultScreen({super.key});
@@ -27,8 +18,7 @@ class MemoryVaultScreen extends ConsumerStatefulWidget {
 
 class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
   final ScrollController _scrollController = ScrollController();
-  final Map<int, GlobalKey<MemoryCardState>> _cardKeys = {};
-  
+
   bool _isInitialLoading = true;
   String? _partnerName;
   int _totalMemoryCount = 0;
@@ -43,7 +33,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
     'Struggles',
     'Growth',
     'Rituals',
-    'Jokes'
+    'Jokes',
   ];
 
   @override
@@ -95,7 +85,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
 
   void _onCategorySelected(String category) {
     if (_selectedCategory == category) return;
-    
+
     setState(() {
       _selectedCategory = category;
       _isInitialLoading = true;
@@ -115,7 +105,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
       };
       type = map[category];
     }
-    
+
     ref.read(memoriesProvider.notifier).load(type, 'recent').then((_) {
       if (mounted) {
         setState(() {
@@ -127,7 +117,6 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
 
   Future<void> _togglePin(Memory memory) async {
     HapticFeedback.mediumImpact();
-    // MemoriesNotifier handles optimistic update & revert automatically
     await ref.read(memoriesProvider.notifier).pin(memory.id);
   }
 
@@ -142,32 +131,24 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
         return Center(
           child: ScaleTransition(
             scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-            child: Dialog(
-              backgroundColor: EdenColors.edenSurface,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: LiquidGlass.withOwnLayer(
+              shape: GlassTheme.shape,
+              settings: GlassTheme.prominent,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
                       'Forget this memory?',
-                      style: GoogleFonts.cormorantGaramond(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w400,
-                        color: EdenColors.textPrimary,
-                      ),
+                      style: _displayStyle(26),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 12),
                     Text(
                       'This moment will disappear from their presence and context forever.',
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 14,
-                        color: EdenColors.textSecondary,
-                        height: 1.45,
-                      ),
+                      style: _bodyStyle(14, color: Colors.white70),
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 28),
@@ -176,47 +157,16 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
                         Expanded(
                           child: TextButton(
                             onPressed: () => Navigator.of(context).pop(false),
-                            child: Text(
-                              'Keep',
-                              style: GoogleFonts.jost(
-                                fontSize: 15,
-                                color: EdenColors.textSecondary,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
+                            child: Text('Keep',
+                                style: _bodyStyle(15, color: Colors.white70)),
                           ),
                         ),
                         const SizedBox(width: 16),
                         Expanded(
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Material(
-                              color: EdenColors.semanticError.withValues(alpha: 0.15),
-                              child: InkWell(
-                                onTap: () => Navigator.of(context).pop(true),
-                                child: Container(
-                                  height: 48,
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: EdenColors.semanticError.withValues(alpha: 0.3), 
-                                      width: 0.8,
-                                    ),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      'Forget',
-                                      style: GoogleFonts.jost(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w500,
-                                        color: EdenColors.semanticError,
-                                        letterSpacing: 0.5,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                          child: _GlassActionButton(
+                            label: 'Forget',
+                            glowColor: EdenColors.orangeGlow,
+                            onTap: () => Navigator.of(context).pop(true),
                           ),
                         ),
                       ],
@@ -237,37 +187,42 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
     final partnerDisplay = _partnerName ?? 'Companion';
 
     return Scaffold(
-      backgroundColor: EdenColors.edenSurface,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header: "What [partnerName] remembers" (CormorantGaramond 36sp, left-aligned)
             Padding(
-              padding: const EdgeInsets.only(left: 24.0, right: 24.0, top: 48.0),
-              child: Column(
+              padding: const EdgeInsets.only(left: 24, right: 24, top: 32),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'What $partnerDisplay remembers',
-                    style: EdenTypography.displayLg.copyWith(
-                      color: EdenColors.textPrimary,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'What $partnerDisplay remembers',
+                          style: _displayStyle(36),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '$_totalMemoryCount memories total',
+                          style: _bodyStyle(12, color: Colors.white60),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '$_totalMemoryCount memories total',
-                    style: EdenTypography.bodySm.copyWith(
-                      color: EdenColors.textSecondary,
-                    ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon:
+                        const Icon(Icons.close_rounded, color: Colors.white70),
                   ),
                 ],
               ),
             ),
-
-            // Filter pills (horizontal scroll, no scrollbar)
             Padding(
-              padding: const EdgeInsets.only(top: 9.0),
+              padding: const EdgeInsets.only(top: 14),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
@@ -277,10 +232,9 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
                     final isSelected = _selectedCategory == cat;
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                      child: PillOption(
+                      child: _GlassCategoryPill(
                         text: cat,
-                        isSelected: isSelected,
-                        isFullWidth: false,
+                        selected: isSelected,
                         onTap: () => _onCategorySelected(cat),
                       ),
                     );
@@ -288,16 +242,13 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
                 ),
               ),
             ),
-
             const SizedBox(height: 16),
-
-            // Memory list
             Expanded(
               child: _isInitialLoading
-                  ? _buildShimmerLoadingState()
+                  ? _buildLoadingState()
                   : memories.isEmpty
                       ? _buildEmptyState()
-                      : _buildMemoryList(memories),
+                      : _buildMemoryGrid(memories),
             ),
           ],
         ),
@@ -305,89 +256,70 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
     );
   }
 
-  Widget _buildMemoryList(List<Memory> memories) {
-    return ListView.builder(
+  Widget _buildMemoryGrid(List<Memory> memories) {
+    return GridView.builder(
       controller: _scrollController,
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 0.82,
+      ),
       itemCount: memories.length,
       itemBuilder: (context, index) {
         final memory = memories[index];
-        final key = _cardKeys.putIfAbsent(memory.id, () => GlobalKey<MemoryCardState>());
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 12.0),
-          child: Dismissible(
-            key: Key(memory.id.toString()),
-            direction: DismissDirection.endToStart,
-            background: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Container(
-                alignment: Alignment.centerRight,
-                padding: const EdgeInsets.only(right: 24),
-                color: EdenColors.semanticError,
-                child: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
+        return Dismissible(
+          key: Key(memory.id.toString()),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 24),
+            decoration: BoxDecoration(
+              color: EdenColors.orangeGlow.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(30),
             ),
-            confirmDismiss: (direction) async {
-              // Play shake animation for confirmation feedback
-              final cardState = key.currentState;
-              if (cardState != null) {
-                await cardState.shake();
-              }
-              // Show dialog
-              if (!context.mounted) return false;
-              final confirm = await _showDeleteConfirmation(context);
-              if (confirm == true) {
-                ref.read(memoriesProvider.notifier).delete(memory.id);
-                setState(() {
-                  _totalMemoryCount = _totalMemoryCount > 0 ? _totalMemoryCount - 1 : 0;
-                });
-                return true;
-              }
-              return false;
-            },
-            child: MemoryCard(
-              key: key,
-              memory: memory,
-              onLongPress: () => _togglePin(memory),
-            ),
+            child: const Icon(Icons.delete_outline_rounded,
+                color: Colors.white, size: 24),
+          ),
+          confirmDismiss: (direction) async {
+            final confirm = await _showDeleteConfirmation(context);
+            if (confirm == true) {
+              ref.read(memoriesProvider.notifier).delete(memory.id);
+              setState(() {
+                _totalMemoryCount =
+                    _totalMemoryCount > 0 ? _totalMemoryCount - 1 : 0;
+              });
+              return true;
+            }
+            return false;
+          },
+          child: _MemoryGlassCard(
+            memory: memory,
+            onTap: () => _openMemoryDetail(memory),
+            onLongPress: () => _togglePin(memory),
           ),
         );
       },
     );
   }
 
-  Widget _buildShimmerLoadingState() {
-    return ListView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      itemCount: 4,
+  Widget _buildLoadingState() {
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 0.82,
+      ),
+      itemCount: 6,
       itemBuilder: (context, index) {
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: GlassCard(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const ShimmerLoader(width: 80, height: 12, borderRadius: 4),
-                const SizedBox(height: 12),
-                const ShimmerLoader(width: double.infinity, height: 16, borderRadius: 4),
-                const SizedBox(height: 6),
-                const ShimmerLoader(width: 200, height: 16, borderRadius: 4),
-                const SizedBox(height: 16),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: ShimmerLoader(width: 100, height: 12, borderRadius: 4),
-                ),
-              ],
-            ),
-          ),
+        return LiquidGlass.withOwnLayer(
+          shape: GlassTheme.shape,
+          settings: GlassTheme.card,
+          child: const SizedBox.expand(),
         );
       },
     );
@@ -395,15 +327,246 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
 
   Widget _buildEmptyState() {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: Text(
-          'Nothing here yet.',
-          style: EdenTypography.bodySm.copyWith(
-            color: EdenColors.textSecondary,
+      child: LiquidGlass.withOwnLayer(
+        shape: GlassTheme.shape,
+        settings: GlassTheme.card,
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Text('Nothing here yet.',
+              style: _bodyStyle(14, color: Colors.white70)),
+        ),
+      ),
+    );
+  }
+
+  void _openMemoryDetail(Memory memory) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _MemoryDetailScreen(
+          memory: memory,
+          onTogglePin: () => _togglePin(memory),
+        ),
+      ),
+    );
+  }
+}
+
+class _MemoryGlassCard extends StatelessWidget {
+  const _MemoryGlassCard({
+    required this.memory,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  final Memory memory;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return LiquidGlass.withOwnLayer(
+      shape: GlassTheme.shape,
+      settings: GlassTheme.card,
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(30),
+        child: Padding(
+          padding: const EdgeInsets.all(18.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _memoryTitle(memory),
+                      style: _bodyStyle(13, color: Colors.white70).copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (memory.isPinned)
+                    const Icon(Icons.push_pin_rounded,
+                        size: 15, color: Colors.white70),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: Text(
+                  memory.memoryText,
+                  style: _bodyStyle(15),
+                  maxLines: 7,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                _formatDate(memory.createdAt),
+                style: _bodyStyle(11, color: Colors.white54),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
+}
+
+class _MemoryDetailScreen extends StatelessWidget {
+  const _MemoryDetailScreen({
+    required this.memory,
+    required this.onTogglePin,
+  });
+
+  final Memory memory;
+  final VoidCallback onTogglePin;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: LiquidGlass.withOwnLayer(
+            shape: GlassTheme.shape,
+            settings: GlassTheme.prominent,
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                            color: Colors.white),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: onTogglePin,
+                        icon: Icon(
+                          memory.isPinned
+                              ? Icons.push_pin_rounded
+                              : Icons.push_pin_outlined,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Text(_memoryTitle(memory), style: _displayStyle(32)),
+                  const SizedBox(height: 12),
+                  Text(_formatDate(memory.createdAt),
+                      style: _bodyStyle(12, color: Colors.white60)),
+                  const SizedBox(height: 28),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Text(memory.memoryText, style: _bodyStyle(18)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassCategoryPill extends StatelessWidget {
+  const _GlassCategoryPill({
+    required this.text,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String text;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return FakeGlass(
+      shape: const LiquidRoundedSuperellipse(borderRadius: 20),
+      settings: selected ? GlassTheme.button : GlassTheme.card,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          child: Text(
+            text,
+            style:
+                _bodyStyle(13, color: selected ? Colors.white : Colors.white70),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassActionButton extends StatelessWidget {
+  const _GlassActionButton({
+    required this.label,
+    required this.glowColor,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color glowColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassGlow(
+      glowColor: glowColor,
+      glowRadius: 0.8,
+      child: FakeGlass(
+        shape: const LiquidRoundedSuperellipse(borderRadius: 18),
+        settings: GlassTheme.button,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            child: Center(
+              child: Text(label, style: _bodyStyle(15)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _memoryTitle(Memory memory) {
+  return memory.memoryType.name;
+}
+
+String _formatDate(DateTime date) {
+  return '${date.month}/${date.day}/${date.year}';
+}
+
+TextStyle _displayStyle(double size, {Color color = Colors.white}) {
+  return TextStyle(
+    fontFamily: 'CormorantGaramond',
+    fontWeight: FontWeight.w300,
+    fontSize: size,
+    color: color,
+    height: 1.12,
+  );
+}
+
+TextStyle _bodyStyle(double size, {Color color = Colors.white}) {
+  return TextStyle(
+    fontFamily: 'PlusJakartaSans',
+    fontWeight: FontWeight.w400,
+    fontSize: size,
+    color: color,
+    height: 1.45,
+  );
 }

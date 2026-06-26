@@ -130,8 +130,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       body: AnimatedBuilder(
         animation: _ctrl,
         builder: (context, child) {
-          final t = _ctrl.value;
-
           // Glow intensity during phase 1 (sinusoidal breathing feel)
           final glow = _glowIntensity.value > 0
               ? 0.3 + 0.2 * math.sin(_glowIntensity.value * math.pi * 1.5)
@@ -155,8 +153,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                       shape: BoxShape.circle,
                       gradient: RadialGradient(
                         colors: [
-                          EdenColors.edenBlush.withOpacity(0.15 * glow),
-                          EdenColors.edenIris.withOpacity(0.08 * glow),
+                          EdenColors.edenBlush.withValues(alpha: 0.15 * glow),
+                          EdenColors.edenIris.withValues(alpha: 0.08 * glow),
                           Colors.transparent,
                         ],
                         stops: const [0.0, 0.6, 1.0],
@@ -193,7 +191,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                               gradient: RadialGradient(
                                 colors: [
                                   EdenColors.edenGold
-                                      .withOpacity(0.12 * shimmerVal),
+                                      .withValues(alpha: 0.12 * shimmerVal),
                                   Colors.transparent,
                                 ],
                                 stops: const [0.4, 1.0],

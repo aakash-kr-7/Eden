@@ -1,21 +1,15 @@
-// ═══════════════════════════════════════════════════════════════════
-// FILE: screens/settings_screen.dart
-// PURPOSE: User preferences, relationship info, privacy controls, account.
-// CONTEXT: Accessed from chat screen via subtle settings icon.
-// ═══════════════════════════════════════════════════════════════════
-
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 import 'package:share_plus/share_plus.dart';
-import '../theme/eden_theme.dart';
-import '../theme/eden_colors.dart';
-import '../widgets/glass_card.dart';
-import '../widgets/eden_button.dart';
+
 import '../main.dart';
+import '../theme/eden_colors.dart';
+import '../theme/glass_theme.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -24,43 +18,32 @@ class SettingsScreen extends ConsumerStatefulWidget {
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTickerProviderStateMixin {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isLoading = true;
   String? _errorMessage;
 
-  // Connection data
   String _partnerName = '';
   String _relationshipStage = 'new';
   int _daysTogether = 0;
   int _memoryCount = 0;
 
-  // Preferences
   String _communicationPace = 'balanced';
   bool _notifProactive = true;
   bool _notifFollowUp = true;
   bool _notifAnniversaries = true;
   bool _notifAbsenceCheck = true;
 
-  // Account
   String _displayName = '';
   bool _isEditingName = false;
   final _nameController = TextEditingController();
 
-  // Delete inline confirmation
   bool _isDeleteExpanded = false;
   final _deleteConfirmController = TextEditingController();
   bool _isDeleteActive = false;
 
-  late final AnimationController _bgController;
-
   @override
   void initState() {
     super.initState();
-    _bgController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 8),
-    )..repeat(reverse: true);
-    
     _deleteConfirmController.addListener(() {
       final matches = _deleteConfirmController.text.trim() == 'delete';
       if (_isDeleteActive != matches) {
@@ -75,7 +58,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
 
   @override
   void dispose() {
-    _bgController.dispose();
     _nameController.dispose();
     _deleteConfirmController.dispose();
     super.dispose();
@@ -90,7 +72,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     try {
       final apiService = ref.read(apiServiceProvider);
       final profile = await apiService.getProfile();
-      
+
       if (mounted) {
         final user = profile['user'] ?? {};
         final partner = profile['partner'] ?? {};
@@ -98,7 +80,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
         final notifPrefs = await apiService.getNotificationPreferences();
 
         setState(() {
-          _displayName = user['display_name'] ?? user['preferred_name'] ?? 'User';
+          _displayName =
+              user['display_name'] ?? user['preferred_name'] ?? 'User';
           _nameController.text = _displayName;
 
           _partnerName = partner['name'] ?? 'Companion';
@@ -106,8 +89,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
           _daysTogether = primary.daysTogether;
           _memoryCount = primary.totalMemories;
 
-          _communicationPace = profile['preferences']?['proactive_cadence'] ?? 'balanced';
-          
+          _communicationPace =
+              profile['preferences']?['proactive_cadence'] ?? 'balanced';
+
           _notifProactive = notifPrefs['proactive'] ?? true;
           _notifFollowUp = notifPrefs['emotional_followup'] ?? true;
           _notifAnniversaries = notifPrefs['anniversaries'] ?? true;
@@ -143,16 +127,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       HapticFeedback.lightImpact();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update name: $e'), backgroundColor: EdenTheme.destructive),
-        );
+        _showSnack('Failed to update name: $e');
       }
     }
   }
 
   Future<void> _updateCommunicationPace(String pace) async {
     if (pace == _communicationPace) return;
-    
+
     final previous = _communicationPace;
     setState(() => _communicationPace = pace);
     HapticFeedback.selectionClick();
@@ -163,9 +145,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     } catch (e) {
       if (mounted) {
         setState(() => _communicationPace = previous);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update pace: $e'), backgroundColor: EdenTheme.destructive),
-        );
+        _showSnack('Failed to update pace: $e');
       }
     }
   }
@@ -179,7 +159,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     final nextProactive = proactive ?? _notifProactive;
     final nextFollowUp = emotionalFollowup ?? _notifFollowUp;
     final nextAnniversaries = anniversaries ?? _notifAnniversaries;
-    
+
     final previousProactive = _notifProactive;
     final previousFollowUp = _notifFollowUp;
     final previousAnniversaries = _notifAnniversaries;
@@ -205,9 +185,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
         _notifAnniversaries = previousAnniversaries;
       });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update notification preferences: $e'), backgroundColor: EdenTheme.destructive),
-        );
+        _showSnack('Failed to update notification preferences: $e');
       }
     }
   }
@@ -216,7 +194,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     HapticFeedback.mediumImpact();
     final bool? confirm = await _showOverlayConfirm(
       title: 'Sign out?',
-      content: 'You will need to sign in again to reconnect with $_partnerName.',
+      content:
+          'You will need to sign in again to reconnect with $_partnerName.',
       confirmLabel: 'Sign out',
     );
 
@@ -241,9 +220,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to delete account: $e'), backgroundColor: EdenTheme.destructive),
-        );
+        _showSnack('Failed to delete account: $e');
       }
     }
   }
@@ -256,7 +233,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       final apiService = ref.read(apiServiceProvider);
       final userId = ref.read(authServiceProvider).currentUserId ?? '';
       final data = await apiService.exportData(userId);
-      
+
       setState(() => _isLoading = false);
 
       if (mounted) {
@@ -266,9 +243,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to compile export: $e'), backgroundColor: EdenTheme.destructive),
-        );
+        _showSnack('Failed to compile export: $e');
       }
     }
   }
@@ -288,78 +263,37 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
         return Center(
           child: ScaleTransition(
             scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-            child: Dialog(
-              backgroundColor: EdenColors.edenSurface,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            child: LiquidGlass.withOwnLayer(
+              shape: GlassTheme.shape,
+              settings: GlassTheme.prominent,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
-                      title,
-                      style: GoogleFonts.cormorantGaramond(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w400,
-                        color: EdenColors.textPrimary,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
+                    Text(title,
+                        style: _displayStyle(26), textAlign: TextAlign.center),
                     const SizedBox(height: 12),
-                    Text(
-                      content,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 14,
-                        color: EdenColors.textSecondary,
-                        height: 1.45,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
+                    Text(content,
+                        style: _bodyStyle(14, color: Colors.white70),
+                        textAlign: TextAlign.center),
                     const SizedBox(height: 28),
                     Row(
                       children: [
                         Expanded(
                           child: TextButton(
                             onPressed: () => Navigator.of(context).pop(false),
-                            child: Text(
-                              'Cancel',
-                              style: GoogleFonts.jost(
-                                fontSize: 15,
-                                color: EdenColors.textSecondary,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
+                            child: Text('Cancel',
+                                style: _bodyStyle(15, color: Colors.white70)),
                           ),
                         ),
                         const SizedBox(width: 16),
                         Expanded(
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: Material(
-                              color: EdenColors.semanticError.withValues(alpha: 0.15),
-                              child: InkWell(
-                                onTap: () => Navigator.of(context).pop(true),
-                                child: Container(
-                                  height: 48,
-                                  decoration: BoxDecoration(
-                                    border: Border.all(color: EdenColors.semanticError.withValues(alpha: 0.3), width: 0.8),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      confirmLabel,
-                                      style: GoogleFonts.jost(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w500,
-                                        color: EdenColors.semanticError,
-                                        letterSpacing: 0.5,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
+                          child: _GlassButton(
+                            label: confirmLabel,
+                            glowColor: EdenColors.orangeGlow,
+                            onTap: () => Navigator.of(context).pop(true),
                           ),
                         ),
                       ],
@@ -374,241 +308,190 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     );
   }
 
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: EdenColors.orangeGlow,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
-        backgroundColor: EdenColors.edenSurface,
+        backgroundColor: Colors.transparent,
         body: Center(
-          child: CircularProgressIndicator(strokeWidth: 1.5, valueColor: AlwaysStoppedAnimation(EdenColors.edenIris)),
+          child: FakeGlass(
+            shape: LiquidOval(),
+            settings: GlassTheme.button,
+            child: Padding(
+              padding: EdgeInsets.all(18.0),
+              child: CircularProgressIndicator(
+                strokeWidth: 1.5,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+            ),
+          ),
         ),
       );
     }
 
     if (_errorMessage != null) {
       return Scaffold(
-        backgroundColor: EdenColors.edenSurface,
+        backgroundColor: Colors.transparent,
         body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(_errorMessage!, style: GoogleFonts.plusJakartaSans(color: EdenColors.semanticError)),
-              const SizedBox(height: 16),
-              TextButton(
-                onPressed: _fetchProfileData,
-                child: Text('retry', style: GoogleFonts.jost(color: EdenColors.edenGold)),
+          child: LiquidGlass.withOwnLayer(
+            shape: GlassTheme.shape,
+            settings: GlassTheme.card,
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_errorMessage!,
+                      style: _bodyStyle(16, color: Colors.white70)),
+                  const SizedBox(height: 16),
+                  _GlassButton(
+                    label: 'retry',
+                    glowColor: EdenColors.amberGlow,
+                    onTap: _fetchProfileData,
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       );
     }
 
     return Scaffold(
-      backgroundColor: EdenColors.edenSurface,
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 16),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              size: 16, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
-      body: Stack(
-        children: [
-          // Slow background breathe orbs
-          Positioned.fill(
-            child: AnimatedBuilder(
-              animation: _bgController,
-              builder: (context, child) {
-                final pulse = _bgController.value;
-                return Container(
-                  decoration: BoxDecoration(
-                    gradient: RadialGradient(
-                      center: Alignment(-0.6, -0.6 + (pulse * 0.1)),
-                      radius: 1.4,
-                      colors: [
-                        EdenColors.presenceBlue.withValues(alpha: 0.03 + (pulse * 0.015)),
-                        Colors.transparent,
+      body: SafeArea(
+        child: ListView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(24, 12, 24, 48),
+          children: [
+            Text(
+              'Settings',
+              style: _bodyStyle(24).copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 24),
+            _buildSectionLabel('your connection'),
+            _GlassSettingsCard(
+              child: Column(
+                children: [
+                  SettingsRow(label: 'Partner', rightText: _partnerName),
+                  _divider(),
+                  SettingsRow(
+                      label: 'Relationship stage',
+                      rightText: _relationshipStage.toLowerCase()),
+                  _divider(),
+                  SettingsRow(
+                      label: 'Days together', rightText: '$_daysTogether days'),
+                  _divider(),
+                  SettingsRow(
+                    label: 'Memory count',
+                    rightText: '$_memoryCount items',
+                    icon: Icons.chevron_right_rounded,
+                    onTap: () => context
+                        .push('/memories')
+                        .then((_) => _fetchProfileData()),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            _buildSectionLabel('how you talk'),
+            _GlassSettingsCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Communication pace',
+                            style: _bodyStyle(13, color: Colors.white70)),
+                        const SizedBox(height: 12),
+                        _buildSegmentedPaceSelector(),
                       ],
                     ),
                   ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: Alignment(0.6, 0.6 - (pulse * 0.1)),
-                        radius: 1.5,
-                        colors: [
-                          EdenColors.warmViolet.withValues(alpha: 0.02 + ((1 - pulse) * 0.015)),
-                          Colors.transparent,
-                        ],
-                      ),
-                    ),
+                  _divider(),
+                  _buildToggleRow(
+                    title: 'Proactive',
+                    value: _notifProactive,
+                    onChanged: (val) => _updateNotifPrefs(proactive: val),
                   ),
-                );
-              },
+                  _divider(),
+                  _buildToggleRow(
+                    title: 'Follow-ups',
+                    value: _notifFollowUp,
+                    onChanged: (val) =>
+                        _updateNotifPrefs(emotionalFollowup: val),
+                  ),
+                  _divider(),
+                  _buildToggleRow(
+                    title: 'Anniversaries',
+                    value: _notifAnniversaries,
+                    onChanged: (val) => _updateNotifPrefs(anniversaries: val),
+                  ),
+                ],
+              ),
             ),
-          ),
-          
-          SafeArea(
-            child: ListView(
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              children: [
-                // Header (Functional, no CormorantGaramond, PlusJakartaSans Bold, 24sp)
-                Text(
-                  'Settings',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w700,
-                    color: EdenColors.textPrimary,
+            const SizedBox(height: 12),
+            _buildSectionLabel('your data'),
+            _GlassSettingsCard(
+              child: Column(
+                children: [
+                  SettingsRow(
+                    label: 'Your memories',
+                    icon: Icons.chevron_right_rounded,
+                    onTap: () => context
+                        .push('/memories')
+                        .then((_) => _fetchProfileData()),
                   ),
-                ),
-                const SizedBox(height: 24),
-
-                // Section 1: "your connection"
-                _buildSectionLabel('your connection'),
-                _buildSettingsCard(
-                  child: Column(
-                    children: [
-                      SettingsRow(
-                        label: 'Partner',
-                        right: Text(
-                          _partnerName,
-                          style: GoogleFonts.plusJakartaSans(color: EdenColors.textSecondary),
-                        ),
-                      ),
-                      _buildDivider(),
-                      SettingsRow(
-                        label: 'Relationship stage',
-                        right: _buildStagePill(_relationshipStage),
-                      ),
-                      _buildDivider(),
-                      SettingsRow(
-                        label: 'Days together',
-                        right: Text(
-                          '$_daysTogether days',
-                          style: GoogleFonts.plusJakartaSans(color: EdenColors.textSecondary),
-                        ),
-                      ),
-                      _buildDivider(),
-                      SettingsRow(
-                        label: 'Memory count',
-                        onTap: () => context.push('/memories').then((_) => _fetchProfileData()),
-                        right: Row(
-                          children: [
-                            Text(
-                              '$_memoryCount items',
-                              style: GoogleFonts.plusJakartaSans(color: EdenColors.textSecondary),
-                            ),
-                            const SizedBox(width: 6),
-                            const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: EdenColors.textTertiary),
-                          ],
-                        ),
-                      ),
-                    ],
+                  _divider(),
+                  SettingsRow(
+                    label: 'Export my data',
+                    icon: Icons.chevron_right_rounded,
+                    onTap: _handleExportData,
                   ),
-                ),
-                const SizedBox(height: 12),
-
-                // Section 2: "how you talk"
-                _buildSectionLabel('how you talk'),
-                _buildSettingsCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Communication pace',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 13,
-                                color: EdenColors.textSecondary,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            _buildSegmentedPaceSelector(),
-                          ],
-                        ),
-                      ),
-                      _buildDivider(),
-                      _buildToggleRow(
-                        title: 'Proactive',
-                        value: _notifProactive,
-                        onChanged: (val) => _updateNotifPrefs(proactive: val),
-                      ),
-                      _buildDivider(),
-                      _buildToggleRow(
-                        title: 'Follow-ups',
-                        value: _notifFollowUp,
-                        onChanged: (val) => _updateNotifPrefs(emotionalFollowup: val),
-                      ),
-                      _buildDivider(),
-                      _buildToggleRow(
-                        title: 'Anniversaries',
-                        value: _notifAnniversaries,
-                        onChanged: (val) => _updateNotifPrefs(anniversaries: val),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                // Section 3: "your data"
-                _buildSectionLabel('your data'),
-                _buildSettingsCard(
-                  child: Column(
-                    children: [
-                      SettingsRow(
-                        label: 'Your memories',
-                        onTap: () => context.push('/memories').then((_) => _fetchProfileData()),
-                        right: const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: EdenColors.textTertiary),
-                      ),
-                      _buildDivider(),
-                      SettingsRow(
-                        label: 'Export my data',
-                        onTap: _handleExportData,
-                        right: const Icon(Icons.arrow_forward_ios_rounded, size: 12, color: EdenColors.textTertiary),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                // Section 4: "account"
-                _buildSectionLabel('account'),
-                _buildSettingsCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Display Name Editable Row
-                      _buildEditableNameRow(),
-                      _buildDivider(),
-                      
-                      // Delete everything expanding row
-                      _buildDeleteEverythingRow(),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // Sign out button
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                  child: EdenSecondaryButton(
-                    text: 'Sign out',
-                    textColor: EdenColors.textSecondary,
-                    onTap: _handleSignOut,
-                  ),
-                ),
-                const SizedBox(height: 48),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            _buildSectionLabel('account'),
+            _GlassSettingsCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildEditableNameRow(),
+                  _divider(),
+                  _buildDeleteEverythingRow(),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            _GlassButton(
+              label: 'Sign out',
+              glowColor: EdenColors.amberGlow,
+              onTap: _handleSignOut,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -618,48 +501,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       padding: const EdgeInsets.only(left: 4, bottom: 8, top: 12),
       child: Text(
         label,
-        style: GoogleFonts.jost(
-          fontSize: 12,
-          fontWeight: FontWeight.w400,
-          color: EdenColors.textSecondary.withValues(alpha: 0.65),
+        style: _bodyStyle(12, color: Colors.white60).copyWith(
           letterSpacing: 1.0,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSettingsCard({required Widget child}) {
-    return GlassCard(
-      child: child,
-    );
-  }
-
-  Widget _buildStagePill(String stage) {
-    Color color = EdenColors.textTertiary;
-    String label = stage.toLowerCase();
-    
-    if (label == 'familiar' || label == 'warming' || label == 'settled') {
-      color = EdenColors.edenSage;
-    } else if (label == 'close') {
-      color = EdenColors.edenIris;
-    } else if (label == 'bonded' || label == 'intimate') {
-      color = EdenColors.edenBlush;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999), // radius-pill
-        border: Border.all(color: color.withValues(alpha: 0.20), width: 1.0),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.jost(
-          fontSize: 11,
-          fontWeight: FontWeight.w500,
-          color: color,
-          letterSpacing: 0.5,
         ),
       ),
     );
@@ -672,44 +515,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       {'label': 'Quick', 'value': 'frequent'},
     ];
 
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: EdenColors.glassLight,
-        borderRadius: BorderRadius.circular(14), // radius-md
-        border: Border.all(color: EdenColors.glassBorder, width: 1.0),
+    return FakeGlass(
+      shape: const LiquidRoundedSuperellipse(borderRadius: 16),
+      settings: const LiquidGlassSettings(
+        blur: 6,
+        glassColor: Color(0x18FFFFFF),
       ),
-      child: Row(
-        children: paceOptions.map((opt) {
-          final isSelected = _communicationPace == opt['value'];
-          return Expanded(
-            child: GestureDetector(
-              onTap: () => _updateCommunicationPace(opt['value']!),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                height: 38,
-                decoration: BoxDecoration(
-                  color: isSelected ? EdenColors.edenIrisDim : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: isSelected ? EdenColors.edenIris : Colors.transparent,
-                    width: 1.0,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Row(
+          children: paceOptions.map((opt) {
+            final isSelected = _communicationPace == opt['value'];
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => _updateCommunicationPace(opt['value']!),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? Colors.white.withValues(alpha: 0.18)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                ),
-                child: Center(
-                  child: Text(
-                    opt['label']!,
-                    style: GoogleFonts.jost(
-                      fontSize: 13,
-                      fontWeight: isSelected ? FontWeight.w500 : FontWeight.w400,
-                      color: isSelected ? EdenColors.textAccent : EdenColors.textSecondary,
+                  child: Center(
+                    child: Text(
+                      opt['label']!,
+                      style: _bodyStyle(
+                        13,
+                        color: isSelected ? Colors.white : Colors.white60,
+                      ).copyWith(
+                        fontWeight:
+                            isSelected ? FontWeight.w700 : FontWeight.w400,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-        }).toList(),
+            );
+          }).toList(),
+        ),
       ),
     );
   }
@@ -724,19 +569,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            title,
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 14,
-              color: EdenColors.textPrimary,
-            ),
-          ),
-          Switch.adaptive(
+          Text(title, style: _bodyStyle(14)),
+          _GlassSwitch(
             value: value,
-            activeColor: EdenColors.edenIris,
-            activeTrackColor: EdenColors.edenIrisDim,
-            inactiveThumbColor: EdenColors.textSecondary,
-            inactiveTrackColor: Colors.transparent,
             onChanged: onChanged,
           ),
         ],
@@ -751,27 +586,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
         child: Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: _nameController,
-                style: GoogleFonts.plusJakartaSans(color: EdenColors.textPrimary, fontSize: 14),
-                cursorColor: EdenColors.edenIris,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  border: UnderlineInputBorder(
-                    borderSide: BorderSide(color: EdenColors.edenIris, width: 0.8),
-                  ),
-                  focusedBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: EdenColors.edenIris, width: 1.2),
+              child: FakeGlass(
+                shape: const LiquidRoundedSuperellipse(borderRadius: 16),
+                settings: const LiquidGlassSettings(
+                  blur: 6,
+                  glassColor: Color(0x18FFFFFF),
+                ),
+                child: TextField(
+                  controller: _nameController,
+                  style: _bodyStyle(14),
+                  cursorColor: EdenColors.electricBlue,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   ),
                 ),
               ),
             ),
             IconButton(
-              icon: const Icon(Icons.check, color: EdenColors.semanticSuccess, size: 20),
+              icon: const Icon(Icons.check, color: Colors.white, size: 20),
               onPressed: _updateDisplayName,
             ),
             IconButton(
-              icon: const Icon(Icons.close, color: EdenColors.semanticError, size: 20),
+              icon: const Icon(Icons.close, color: Colors.white60, size: 20),
               onPressed: () {
                 setState(() {
                   _nameController.text = _displayName;
@@ -786,17 +625,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
 
     return SettingsRow(
       label: 'Display name',
+      rightText: _displayName,
+      icon: Icons.edit_outlined,
       onTap: () => setState(() => _isEditingName = true),
-      right: Row(
-        children: [
-          Text(
-            _displayName,
-            style: GoogleFonts.plusJakartaSans(color: EdenColors.textSecondary),
-          ),
-          const SizedBox(width: 8),
-          const Icon(Icons.edit_outlined, size: 14, color: EdenColors.textTertiary),
-        ],
-      ),
     );
   }
 
@@ -804,7 +635,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        GestureDetector(
+        SettingsRow(
+          label: 'Delete everything',
+          icon: _isDeleteExpanded
+              ? Icons.keyboard_arrow_up_rounded
+              : Icons.keyboard_arrow_down_rounded,
           onTap: () {
             setState(() {
               _isDeleteExpanded = !_isDeleteExpanded;
@@ -813,27 +648,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
               }
             });
           },
-          behavior: HitTestBehavior.opaque,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Delete everything',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 14,
-                    color: EdenColors.textSecondary,
-                  ),
-                ),
-                Icon(
-                  _isDeleteExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                  size: 18,
-                  color: EdenColors.textSecondary,
-                ),
-              ],
-            ),
-          ),
         ),
         if (_isDeleteExpanded)
           Padding(
@@ -843,65 +657,40 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
               children: [
                 Text(
                   'This will permanently erase all settings, connection details, and conversation history. This cannot be undone.',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    color: EdenColors.semanticError.withValues(alpha: 0.8),
-                    height: 1.45,
-                  ),
+                  style: _bodyStyle(12, color: Colors.white60),
                 ),
                 const SizedBox(height: 12),
-                Text(
-                  'Type "delete" below to confirm:',
-                  style: GoogleFonts.plusJakartaSans(
-                    fontSize: 12,
-                    color: EdenColors.textSecondary,
-                  ),
-                ),
+                Text('Type "delete" below to confirm:',
+                    style: _bodyStyle(12, color: Colors.white70)),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: _deleteConfirmController,
-                  style: GoogleFonts.plusJakartaSans(color: EdenColors.textPrimary, fontSize: 14),
-                  cursorColor: EdenColors.semanticError,
-                  decoration: InputDecoration(
-                    hintText: 'delete',
-                    hintStyle: GoogleFonts.plusJakartaSans(color: EdenColors.textTertiary, fontSize: 14),
-                    filled: true,
-                    fillColor: EdenColors.edenVoid,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    focusedBorder: OutlineInputBorder(
-                      borderSide: const BorderSide(color: EdenColors.semanticError, width: 1.0),
-                      borderRadius: BorderRadius.circular(12.0),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderSide: const BorderSide(color: EdenColors.edenRim, width: 1.0),
-                      borderRadius: BorderRadius.circular(12.0),
+                FakeGlass(
+                  shape: const LiquidRoundedSuperellipse(borderRadius: 16),
+                  settings: const LiquidGlassSettings(
+                    blur: 6,
+                    glassColor: Color(0x18FFFFFF),
+                  ),
+                  child: TextField(
+                    controller: _deleteConfirmController,
+                    style: _bodyStyle(14),
+                    cursorColor: EdenColors.orangeGlow,
+                    decoration: InputDecoration(
+                      hintText: 'delete',
+                      hintStyle: _bodyStyle(14, color: Colors.white38),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
                     ),
                   ),
                 ),
                 const SizedBox(height: 16),
-                GestureDetector(
-                  onTap: _isDeleteActive ? _handleDeleteAccount : null,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: _isDeleteActive ? EdenColors.semanticError : EdenColors.semanticError.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _isDeleteActive ? EdenColors.semanticError : EdenColors.semanticError.withValues(alpha: 0.3),
-                        width: 0.8,
-                      ),
-                    ),
-                    child: Center(
-                      child: Text(
-                        'Erase All Data',
-                        style: GoogleFonts.jost(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                          color: _isDeleteActive ? Colors.white : EdenColors.semanticError.withValues(alpha: 0.4),
-                          letterSpacing: 0.5,
-                        ),
-                      ),
+                Opacity(
+                  opacity: _isDeleteActive ? 1.0 : 0.4,
+                  child: IgnorePointer(
+                    ignoring: !_isDeleteActive,
+                    child: _GlassButton(
+                      label: 'Erase All Data',
+                      glowColor: EdenColors.orangeGlow,
+                      onTap: _handleDeleteAccount,
                     ),
                   ),
                 ),
@@ -912,65 +701,178 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with SingleTick
     );
   }
 
-  Widget _buildDivider() {
+  Widget _divider() {
     return Container(
       height: 0.6,
       width: double.infinity,
-      color: EdenColors.glassBorder,
+      color: Colors.white.withValues(alpha: 0.12),
     );
   }
 }
 
-class SettingsRow extends StatefulWidget {
-  final String label;
-  final Widget? right;
-  final VoidCallback? onTap;
-  final bool isDestructive;
-
+class SettingsRow extends StatelessWidget {
   const SettingsRow({
     super.key,
     required this.label,
-    this.right,
+    this.rightText,
+    this.icon,
     this.onTap,
-    this.isDestructive = false,
   });
 
-  @override
-  State<SettingsRow> createState() => _SettingsRowState();
-}
-
-class _SettingsRowState extends State<SettingsRow> {
-  bool _isTapped = false;
+  final String label;
+  final String? rightText;
+  final IconData? icon;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: widget.onTap != null ? (_) => setState(() => _isTapped = true) : null,
-      onTapUp: widget.onTap != null ? (_) {
-        setState(() => _isTapped = false);
-        HapticFeedback.lightImpact();
-        widget.onTap!();
-      } : null,
-      onTapCancel: widget.onTap != null ? () => setState(() => _isTapped = false) : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 100),
-        height: 56.0,
-        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-        color: _isTapped ? EdenColors.glassLight : Colors.transparent,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              widget.label,
-              style: GoogleFonts.plusJakartaSans(
-                fontSize: 14,
-                color: widget.isDestructive ? EdenColors.semanticError : EdenColors.textPrimary,
-              ),
-            ),
-            if (widget.right != null) widget.right!,
-          ],
+    return InkWell(
+      onTap: onTap,
+      child: SizedBox(
+        height: 56,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(child: Text(label, style: _bodyStyle(14))),
+              if (rightText != null)
+                Flexible(
+                  child: Text(
+                    rightText!,
+                    style: _bodyStyle(14, color: Colors.white60),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              if (icon != null) ...[
+                const SizedBox(width: 8),
+                Icon(icon, size: 16, color: Colors.white60),
+              ],
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+class _GlassSettingsCard extends StatelessWidget {
+  const _GlassSettingsCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LiquidGlass.withOwnLayer(
+      shape: GlassTheme.shape,
+      settings: GlassTheme.card,
+      child: child,
+    );
+  }
+}
+
+class _GlassSwitch extends StatelessWidget {
+  const _GlassSwitch({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return FakeGlass(
+      shape: const LiquidRoundedSuperellipse(borderRadius: 18),
+      settings: const LiquidGlassSettings(
+        blur: 6,
+        glassColor: Color(0x20FFFFFF),
+      ),
+      child: GestureDetector(
+        onTap: () => onChanged(!value),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 52,
+          height: 32,
+          padding: const EdgeInsets.all(4),
+          child: Align(
+            alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: value ? EdenColors.electricBlue : Colors.white60,
+                boxShadow: value
+                    ? [
+                        BoxShadow(
+                          color:
+                              EdenColors.electricBlue.withValues(alpha: 0.45),
+                          blurRadius: 10,
+                        ),
+                      ]
+                    : null,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassButton extends StatelessWidget {
+  const _GlassButton({
+    required this.label,
+    required this.glowColor,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color glowColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassGlow(
+      glowColor: glowColor,
+      glowRadius: 0.8,
+      child: FakeGlass(
+        shape: const LiquidRoundedSuperellipse(borderRadius: 20),
+        settings: GlassTheme.button,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            child: Center(
+              child: Text(
+                label,
+                style: _bodyStyle(15).copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+TextStyle _displayStyle(double size, {Color color = Colors.white}) {
+  return TextStyle(
+    fontFamily: 'CormorantGaramond',
+    fontWeight: FontWeight.w300,
+    fontSize: size,
+    color: color,
+    height: 1.12,
+  );
+}
+
+TextStyle _bodyStyle(double size, {Color color = Colors.white}) {
+  return TextStyle(
+    fontFamily: 'PlusJakartaSans',
+    fontWeight: FontWeight.w400,
+    fontSize: size,
+    color: color,
+    height: 1.45,
+  );
 }

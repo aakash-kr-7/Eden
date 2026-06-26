@@ -1,76 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
+
 import '../theme/eden_colors.dart';
 import '../theme/eden_typography.dart';
+import '../theme/glass_theme.dart';
+import 'shimmer_loader.dart';
 
-// ─── Minimal shimmer that respects Eden's no-spinner rule ──────────
-class EdenShimmer extends StatefulWidget {
-  final double width;
-  final double height;
-  final double borderRadius;
-  const EdenShimmer({
-    super.key,
-    this.width = 80,
-    this.height = 16,
-    this.borderRadius = 999,
-  });
-
-  @override
-  State<EdenShimmer> createState() => _EdenShimmerState();
-}
-
-class _EdenShimmerState extends State<EdenShimmer>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1500),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        return Container(
-          width: widget.width,
-          height: widget.height,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(widget.borderRadius),
-            gradient: LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: [
-                EdenColors.glassLight,
-                EdenColors.glassShimmer,
-                EdenColors.glassLight,
-              ],
-              stops: [
-                (_controller.value - 0.3).clamp(0.0, 1.0),
-                _controller.value,
-                (_controller.value + 0.3).clamp(0.0, 1.0),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-// ─── Primary Button (accent solid, no shadow) ──────────────────────
-class EdenPrimaryButton extends StatefulWidget {
+class EdenPrimaryButton extends StatelessWidget {
   final String text;
   final VoidCallback? onTap;
   final bool isLoading;
@@ -87,74 +24,20 @@ class EdenPrimaryButton extends StatefulWidget {
   });
 
   @override
-  State<EdenPrimaryButton> createState() => _EdenPrimaryButtonState();
-}
-
-class _EdenPrimaryButtonState extends State<EdenPrimaryButton> {
-  bool _isPressed = false;
-
-  @override
   Widget build(BuildContext context) {
-    final bool isEnabled = widget.onTap != null && !widget.isLoading;
-
-    Widget buttonChild = Container(
-      height: 56.0, // was 54 → 8pt grid
-      width: widget.width,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(horizontal: 32.0),
-      decoration: BoxDecoration(
-        color: EdenColors.edenIris,
-        borderRadius: BorderRadius.circular(999.0), // radius-pill
-        // No boxShadow – Eden uses only glass blur, never shadows
-      ),
-      child: widget.isLoading
-          ? const EdenShimmer(
-              width: 80,
-              height: 20,
-              borderRadius: 999,
-            )
-          : Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.icon != null) ...[
-                  widget.icon!,
-                  const SizedBox(width: 12.0),
-                ],
-                Text(
-                  widget.text,
-                  style: EdenTypography.button,
-                ),
-              ],
-            ),
-    );
-
-    return GestureDetector(
-      onTapDown: isEnabled ? (_) => setState(() => _isPressed = true) : null,
-      onTapUp: isEnabled
-          ? (_) {
-              setState(() => _isPressed = false);
-              HapticFeedback.lightImpact();
-              widget.onTap?.call();
-            }
-          : null,
-      onTapCancel: isEnabled ? () => setState(() => _isPressed = false) : null,
-      child: AnimatedScale(
-        scale: _isPressed ? 0.97 : 1.0,
-        duration: const Duration(milliseconds: 100),
-        curve: Curves.easeOut,
-        child: AnimatedOpacity(
-          opacity: isEnabled ? (_isPressed ? 0.9 : 1.0) : 0.5,
-          duration: const Duration(milliseconds: 100),
-          child: buttonChild,
-        ),
-      ),
+    return _EdenGlassButton(
+      text: text,
+      onTap: onTap,
+      isLoading: isLoading,
+      width: width,
+      icon: icon,
+      glowColor: EdenColors.amberGlow,
+      textColor: EdenColors.textPrimary,
     );
   }
 }
 
-// ─── Secondary Button (glass, no shadow) ───────────────────────────
-class EdenSecondaryButton extends StatefulWidget {
+class EdenSecondaryButton extends StatelessWidget {
   final String text;
   final VoidCallback? onTap;
   final bool isLoading;
@@ -173,51 +56,97 @@ class EdenSecondaryButton extends StatefulWidget {
   });
 
   @override
-  State<EdenSecondaryButton> createState() => _EdenSecondaryButtonState();
+  Widget build(BuildContext context) {
+    return _EdenGlassButton(
+      text: text,
+      onTap: onTap,
+      isLoading: isLoading,
+      width: width,
+      icon: icon,
+      glowColor: EdenColors.electricBlue,
+      textColor: textColor,
+      subtle: true,
+    );
+  }
 }
 
-class _EdenSecondaryButtonState extends State<EdenSecondaryButton> {
+class _EdenGlassButton extends StatefulWidget {
+  const _EdenGlassButton({
+    required this.text,
+    required this.textColor,
+    required this.glowColor,
+    this.onTap,
+    this.isLoading = false,
+    this.width,
+    this.icon,
+    this.subtle = false,
+  });
+
+  final String text;
+  final VoidCallback? onTap;
+  final bool isLoading;
+  final double? width;
+  final Widget? icon;
+  final Color textColor;
+  final Color glowColor;
+  final bool subtle;
+
+  @override
+  State<_EdenGlassButton> createState() => _EdenGlassButtonState();
+}
+
+class _EdenGlassButtonState extends State<_EdenGlassButton> {
   bool _isPressed = false;
 
   @override
   Widget build(BuildContext context) {
-    final bool isEnabled = widget.onTap != null && !widget.isLoading;
+    final isEnabled = widget.onTap != null && !widget.isLoading;
 
-    Widget buttonChild = Container(
-      height: 56.0, // 8pt grid
-      width: widget.width,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.symmetric(horizontal: 32.0),
-      decoration: BoxDecoration(
-        color: EdenColors.glassMedium,
-        borderRadius: BorderRadius.circular(999.0),
-        border: Border.all(
-          color: EdenColors.glassBorder,
-          width: 1.0,
+    Widget content = GlassGlow(
+      glowColor: widget.glowColor,
+      glowRadius: widget.subtle ? 0.45 : 0.8,
+      child: FakeGlass(
+        shape: const LiquidRoundedSuperellipse(borderRadius: 22),
+        settings: GlassTheme.button,
+        child: SizedBox(
+          height: 56,
+          width: widget.width,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Center(
+              child: widget.isLoading
+                  ? const ShimmerLoader(
+                      width: 80, height: 18, borderRadius: 999)
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (widget.icon != null) ...[
+                          widget.icon!,
+                          const SizedBox(width: 12),
+                        ],
+                        Text(
+                          widget.text,
+                          style: EdenTypography.button.copyWith(
+                            color: widget.textColor,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
         ),
       ),
-      child: widget.isLoading
-          ? EdenShimmer(
-              width: 80,
-              height: 20,
-              borderRadius: 999,
-            )
-          : Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.icon != null) ...[
-                  widget.icon!,
-                  const SizedBox(width: 12.0),
-                ],
-                Text(
-                  widget.text,
-                  style: EdenTypography.button.copyWith(
-                    color: widget.textColor,
-                  ),
-                ),
-              ],
-            ),
+    );
+
+    content = AnimatedScale(
+      scale: _isPressed ? 0.97 : 1.0,
+      duration: const Duration(milliseconds: 100),
+      child: AnimatedOpacity(
+        opacity: isEnabled ? 1.0 : 0.5,
+        duration: const Duration(milliseconds: 100),
+        child: content,
+      ),
     );
 
     return GestureDetector(
@@ -230,16 +159,7 @@ class _EdenSecondaryButtonState extends State<EdenSecondaryButton> {
             }
           : null,
       onTapCancel: isEnabled ? () => setState(() => _isPressed = false) : null,
-      child: AnimatedScale(
-        scale: _isPressed ? 0.97 : 1.0,
-        duration: const Duration(milliseconds: 100),
-        curve: Curves.easeOut,
-        child: AnimatedOpacity(
-          opacity: isEnabled ? (_isPressed ? 0.9 : 1.0) : 0.5,
-          duration: const Duration(milliseconds: 100),
-          child: buttonChild,
-        ),
-      ),
+      child: content,
     );
   }
 }

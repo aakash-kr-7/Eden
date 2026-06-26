@@ -35,7 +35,7 @@ class EdenTheme {
   static const TextStyle bodyMedium = EdenTypography.bodyLg;
   static const TextStyle bodySmall = EdenTypography.bodyMd;
   static const TextStyle labelMedium = EdenTypography.label;
-  
+
   static final TextStyle labelSmall = EdenTypography.bodySm.copyWith(
     color: EdenColors.textTertiary,
     letterSpacing: 1.0,
@@ -102,11 +102,15 @@ class EdenTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: EdenColors.edenElevated,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 14.0),
-        hintStyle: EdenTypography.bodyXl.copyWith(color: EdenColors.textTertiary),
-        labelStyle: EdenTypography.bodyLg.copyWith(color: EdenColors.textSecondary),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 20.0, vertical: 14.0),
+        hintStyle:
+            EdenTypography.bodyXl.copyWith(color: EdenColors.textTertiary),
+        labelStyle:
+            EdenTypography.bodyLg.copyWith(color: EdenColors.textSecondary),
         focusedBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: EdenColors.edenIrisDim, width: 1.0),
+          borderSide:
+              const BorderSide(color: EdenColors.edenIrisDim, width: 1.0),
           borderRadius: BorderRadius.circular(28.0),
         ),
         enabledBorder: OutlineInputBorder(
@@ -114,7 +118,8 @@ class EdenTheme {
           borderRadius: BorderRadius.circular(28.0),
         ),
         disabledBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: EdenColors.edenRim.withValues(alpha: 0.5), width: 1.0),
+          borderSide: BorderSide(
+              color: EdenColors.edenRim.withValues(alpha: 0.5), width: 1.0),
           borderRadius: BorderRadius.circular(28.0),
         ),
         border: OutlineInputBorder(

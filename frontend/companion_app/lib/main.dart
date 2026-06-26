@@ -12,9 +12,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
 import 'firebase_options.dart';
 import 'theme/eden_theme.dart';
+import 'theme/glass_theme.dart';
 import 'screens/boot_screen.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
@@ -25,6 +27,7 @@ import 'screens/settings_screen.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/notification_service.dart';
+import 'widgets/liquid_background.dart';
 
 // --- Riverpod Service Providers ---
 
@@ -190,8 +193,21 @@ class _EdenAppState extends ConsumerState<EdenApp> {
     return MaterialApp.router(
       title: 'Eden',
       debugShowCheckedModeBanner: false,
-      theme: EdenTheme.dark(),
+      theme: EdenTheme.dark().copyWith(
+        scaffoldBackgroundColor: Colors.transparent,
+      ),
       routerConfig: router,
+      builder: (context, child) {
+        return Stack(
+          children: [
+            const LiquidBackground(),
+            LiquidGlassLayer(
+              settings: GlassTheme.card,
+              child: child!,
+            ),
+          ],
+        );
+      },
     );
   }
 }

@@ -1,26 +1,19 @@
-// ═══════════════════════════════════════════════════════════════════
-// FILE: screens/chat_screen.dart
-// PURPOSE: Primary conversation screen — the heart of Eden.
-// CONTEXT: Replaces chat_screen.dart with human texting support.
-// ═══════════════════════════════════════════════════════════════════
-
 import 'dart:async';
-import 'dart:ui';
+
 import 'package:eden/widgets/typing_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_keyboard_visibility/flutter_keyboard_visibility.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../theme/eden_colors.dart';
-import '../theme/eden_typography.dart';
-import '../theme/eden_animations.dart';
-import '../models/models.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
+
 import '../main.dart';
-import '../widgets/message_bubble.dart';
-import '../widgets/glass_card.dart';
+import '../models/models.dart';
 import '../providers/chat_provider_v3.dart';
 import '../providers/session_provider.dart';
+import '../theme/eden_colors.dart';
+import '../theme/glass_theme.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -81,9 +74,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final offset = _scrollController.offset;
       final maxScroll = _scrollController.position.maxScrollExtent;
       final distanceFromBottom = maxScroll - offset;
+      final targetOpacity = distanceFromBottom > 100 ? 1.0 : 0.0;
 
-      // Fades in when user scrolls > 100px up from the bottom
-      final double targetOpacity = (distanceFromBottom > 100) ? 1.0 : 0.0;
       if (_headerOpacity != targetOpacity) {
         setState(() {
           _headerOpacity = targetOpacity;
@@ -123,12 +115,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           _sendTypingStatus(true);
         });
       }
-    } else {
-      if (_typingTimer != null) {
-        _typingTimer!.cancel();
-        _typingTimer = null;
-        _sendTypingStatus(false);
-      }
+    } else if (_typingTimer != null) {
+      _typingTimer!.cancel();
+      _typingTimer = null;
+      _sendTypingStatus(false);
     }
   }
 
@@ -145,7 +135,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             .updateTypingStatus(conversationId, isTyping);
       }
     } catch (e) {
-      debugPrint("Failed to send typing status: $e");
+      debugPrint('Failed to send typing status: $e');
     }
   }
 
@@ -168,7 +158,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
               .read(apiServiceProvider)
               .markRead(conversationId, lastMessageId);
         } catch (e) {
-          debugPrint("Failed to mark messages as read: $e");
+          debugPrint('Failed to mark messages as read: $e');
         }
       }
     }
@@ -176,24 +166,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   Future<void> _initializeChat() async {
     try {
-      // 1. Load messages from local Isar cache immediately (zero loading time)
       await ref.read(messagesProvider.notifier).loadFromCache();
       _scrollToBottom(animated: false);
     } catch (e) {
-      debugPrint("Error loading cache: $e");
+      debugPrint('Error loading cache: $e');
     }
 
-    // 2. Load session from backend in parallel
     try {
       final apiService = ref.read(apiServiceProvider);
       final session = await ref.refresh(sessionProvider.future);
       final conversationId = session.conversationId;
-
-      // Fetch latest messages from backend
       final fetchedMessages = await apiService.getMessages(conversationId);
       final List<Message> mergedMessages = List.from(fetchedMessages);
 
-      // 3. Handle unread proactive messages
       if (session.unreadProactive.isNotEmpty) {
         for (var pm in session.unreadProactive) {
           final pmId = int.tryParse(pm.id) ?? pm.id.hashCode;
@@ -208,10 +193,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           }
         }
 
-        // Sort chronologically (newest first for provider list representation)
         mergedMessages.sort((a, b) => b.sentAt.compareTo(a.sentAt));
 
-        // Track the first proactive message to display "X days/hours ago"
         final oldestProactive = session.unreadProactive.reduce(
           (a, b) => a.sentAt.isBefore(b.sentAt) ? a : b,
         );
@@ -219,18 +202,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             int.tryParse(oldestProactive.id) ?? oldestProactive.id.hashCode;
       }
 
-      // Initialize provider state
       ref.read(messagesProvider.notifier).setMessages(mergedMessages);
-
-      // Save messages to local cache
       await ref.read(localCacheServiceProvider).saveMessages(mergedMessages);
 
-      // Acknowledge proactive messages
       for (var pm in session.unreadProactive) {
         try {
           await apiService.acknowledgeProactive(pm.id);
         } catch (e) {
-          debugPrint("Failed to acknowledge proactive: $e");
+          debugPrint('Failed to acknowledge proactive: $e');
         }
       }
 
@@ -241,7 +220,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
       _scrollToBottom(animated: true);
     } catch (e) {
-      debugPrint("Error initializing session: $e");
+      debugPrint('Error initializing session: $e');
       setState(() {
         _noConnection = true;
       });
@@ -292,8 +271,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     _lastSentText = text;
     HapticFeedback.lightImpact();
-
-    // Clear and unfocus
     FocusScope.of(context).unfocus();
 
     setState(() {
@@ -310,9 +287,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           .sendMessage(conversationId, text);
       _scrollToBottom(animated: true);
     } catch (e) {
-      debugPrint("Error sending message: $e");
+      debugPrint('Error sending message: $e');
       setState(() {
-        _errorMessage = "something went wrong — tap to retry";
+        _errorMessage = 'something went wrong - tap to retry';
         _noConnection = true;
       });
     } finally {
@@ -353,12 +330,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   bool _shouldShowTimestamp(List<Message> messages, int index) {
-    if (index == 0) {
-      return true; // oldest message
-    }
+    if (index == 0) return true;
     final current = messages[messages.length - 1 - index];
 
-    // Sub-bursts shouldn't get individual timestamps to match clean flow (e.g. WhatsApp)
     if (current.isPartOfBurst &&
         current.burstIndex != null &&
         current.burstIndex! > 0) {
@@ -389,7 +363,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     final showTyping = isTyping && streamingText.isEmpty;
     final showStreaming = isTyping && streamingText.isNotEmpty;
     final hasError = _errorMessage != null;
-
     final listCount = messages.length +
         (showTyping || showStreaming ? 1 : 0) +
         (hasError ? 1 : 0);
@@ -400,20 +373,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           _scrollToBottom(animated: true);
         }
         return Scaffold(
-          backgroundColor: EdenColors.edenVoid,
+          backgroundColor: Colors.transparent,
           resizeToAvoidBottomInset: true,
-          body: BreathingBackground(
-            baseColor: EdenColors.edenVoid,
-            child: SafeArea(
-              child: Stack(
-                children: [
-                  _buildMessageList(messages, listCount, showTyping,
-                      showStreaming, hasError, partner),
-                  _buildPartnerHeader(partner),
-                  if (_noConnection) _buildNoConnectionBanner(),
-                  _buildInputArea(),
-                ],
-              ),
+          body: SafeArea(
+            child: Stack(
+              children: [
+                _buildMessageList(
+                  messages,
+                  listCount,
+                  showTyping,
+                  showStreaming,
+                  hasError,
+                  partner,
+                ),
+                _buildPartnerHeader(partner),
+                if (_noConnection) _buildNoConnectionBanner(),
+                _buildInputArea(),
+              ],
             ),
           ),
         );
@@ -421,10 +397,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  // FIXED: removed online dot and typing status from header.
-  // Design spec: "Never shows 'online' or 'typing' status in header."
-  // Typing feedback lives in the message list (TypingIndicatorV2) only.
-  // Header subtitle shows partner name + mood exclusively.
   Widget _buildPartnerHeader(Partner? partner) {
     final partnerName = partner?.name ?? 'Eden';
     final partnerMood = _formatMood(partner?.currentMood);
@@ -438,60 +410,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         child: AnimatedOpacity(
           opacity: _headerOpacity,
           duration: const Duration(milliseconds: 200),
-          child: ClipRRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 12.0, sigmaY: 12.0),
-              child: Container(
-                height: 80.0,
-                decoration: const BoxDecoration(
-                  color: EdenColors.glassLight,
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          child: FakeGlass(
+            shape: const LiquidRoundedSuperellipse(borderRadius: 0),
+            settings: GlassTheme.card,
+            child: SizedBox(
+              height: 80.0,
+              child: Stack(
                 alignment: Alignment.center,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(partnerName, style: _displayStyle(28)),
+                      const SizedBox(height: 2.0),
+                      Text(
+                        '$partnerName · $partnerMood',
+                        style: _bodyStyle(12, color: Colors.white60),
+                      ),
+                    ],
+                  ),
+                  Positioned(
+                    right: 12,
+                    child: Row(
                       children: [
-                        Text(
-                          partnerName,
-                          style: EdenTypography.displayMd
-                              .copyWith(color: EdenColors.textPrimary),
+                        IconButton(
+                          icon: const Icon(Icons.bookmark_border_rounded,
+                              size: 20),
+                          color: Colors.white70,
+                          onPressed: () => context.push('/memories'),
+                          visualDensity: VisualDensity.compact,
                         ),
-                        const SizedBox(height: 2.0),
-                        Text(
-                          '$partnerName · $partnerMood',
-                          style: EdenTypography.bodySm.copyWith(
-                            color: EdenColors.textSecondary,
-                          ),
+                        IconButton(
+                          icon: const Icon(Icons.settings_outlined, size: 20),
+                          color: Colors.white70,
+                          onPressed: () => context.push('/settings'),
+                          visualDensity: VisualDensity.compact,
                         ),
                       ],
                     ),
-                    Positioned(
-                      right: 0,
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.bookmark_border_rounded,
-                                size: 20),
-                            color:
-                                EdenColors.textSecondary.withValues(alpha: 0.6),
-                            onPressed: () => context.push('/memories'),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.settings_outlined, size: 20),
-                            color:
-                                EdenColors.textSecondary.withValues(alpha: 0.6),
-                            onPressed: () => context.push('/settings'),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -510,13 +468,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   ) {
     if (_isInitializing) {
       return Center(
-        child: FadeSlideIn(
-          duration: const Duration(milliseconds: 300),
-          child: Text(
-            "gathering presence…",
-            style: EdenTypography.bodySm.copyWith(
-              color: EdenColors.textSecondary,
-              fontStyle: FontStyle.italic,
+        child: FakeGlass(
+          shape: const LiquidRoundedSuperellipse(borderRadius: 18),
+          settings: GlassTheme.card,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            child: Text(
+              'gathering presence...',
+              style: _bodyStyle(12, color: Colors.white60)
+                  .copyWith(fontStyle: FontStyle.italic),
             ),
           ),
         ),
@@ -526,55 +486,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (messages.isEmpty && !showTyping && !showStreaming && !hasError) {
       final partnerName = partner?.name ?? 'Eden';
       return Center(
-        child: FadeSlideIn(
-          delay: const Duration(milliseconds: 400),
-          duration: const Duration(milliseconds: 300),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                partnerName,
-                style: EdenTypography.displayLg
-                    .copyWith(color: EdenColors.textPrimary),
-              ),
-              const SizedBox(height: 8.0),
-              Text(
-                "say something",
-                style: EdenTypography.bodySm
-                    .copyWith(color: EdenColors.textTertiary),
-              ),
-            ],
-          ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(partnerName, style: _displayStyle(36)),
+            const SizedBox(height: 8.0),
+            Text('say something', style: _bodyStyle(12, color: Colors.white54)),
+          ],
         ),
       );
     }
 
     return ListView.builder(
       controller: _scrollController,
-      reverse: false,
-      padding: const EdgeInsets.only(
-        top: 80.0,
-        bottom: 120.0,
-      ),
+      padding: const EdgeInsets.only(top: 80.0, bottom: 120.0),
       itemCount: listCount,
       itemBuilder: (context, index) {
-        // Error state centered link at very bottom
         if (hasError && index == listCount - 1) {
-          return FadeSlideIn(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-            child: GestureDetector(
-              onTap: _retrySendMessage,
-              behavior: HitTestBehavior.opaque,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16.0),
-                child: Center(
-                  child: Text(
-                    _errorMessage!,
-                    style: EdenTypography.bodySm.copyWith(
-                      color: EdenColors.textTertiary,
-                      decoration: TextDecoration.underline,
-                    ),
+          return GestureDetector(
+            onTap: _retrySendMessage,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16.0),
+              child: Center(
+                child: Text(
+                  _errorMessage!,
+                  style: _bodyStyle(12, color: Colors.white60).copyWith(
+                    decoration: TextDecoration.underline,
+                    decorationColor: Colors.white60,
                   ),
                 ),
               ),
@@ -582,7 +521,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           );
         }
 
-        // Typing indicator or streaming text bubble
         if (showTyping || showStreaming) {
           final indicatorIndex = hasError ? listCount - 2 : listCount - 1;
           if (index == indicatorIndex) {
@@ -597,46 +535,37 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                 child: Padding(
                   padding: const EdgeInsets.only(
                       left: 20.0, top: 12.0, bottom: 12.0),
-                  child: TypingIndicatorV2(
-                    isActive: true,
-                    isFollowUp: isFollowUp,
-                    overrideDuration: overrideDuration,
-                    dotSize: 8.0,
-                    spacing: 6.0,
-                  ),
-                ),
-              );
-            } else {
-              final streamingText = ref.read(streamingTextProvider);
-              return Container(
-                margin: const EdgeInsets.only(
-                    left: 20.0, right: 8.0, top: 4.0, bottom: 4.0),
-                alignment: Alignment.centerLeft,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: MediaQuery.of(context).size.width * 0.85,
-                  ),
-                  child: FadeSlideIn(
-                    key: const ValueKey('streaming_text_bubble'),
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                    offsetY: 8.0,
+                  child: FakeGlass(
+                    shape: const LiquidRoundedSuperellipse(borderRadius: 16),
+                    settings: GlassTheme.card,
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8.0),
-                      child: Text(
-                        streamingText,
-                        style: EdenTypography.bodyXl
-                            .copyWith(color: EdenColors.textPartner),
+                      padding: const EdgeInsets.all(12.0),
+                      child: TypingIndicatorV2(
+                        isActive: true,
+                        isFollowUp: isFollowUp,
+                        overrideDuration: overrideDuration,
+                        dotSize: 8.0,
+                        spacing: 6.0,
                       ),
                     ),
                   ),
                 ),
               );
             }
+
+            final text = ref.read(streamingTextProvider);
+            return _GlassMessageBubble(
+              message: Message(
+                id: -1,
+                role: MessageRole.partner,
+                content: text,
+                sentAt: DateTime.now(),
+              ),
+              showTimestamp: false,
+            );
           }
         }
 
-        // Regular message rendering
         final msgIndex = messages.length - 1 - index;
         final msg = messages[msgIndex];
         final showTimestamp = _shouldShowTimestamp(messages, index);
@@ -655,7 +584,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           }
         }
 
-        return MessageBubble(
+        return _GlassMessageBubble(
           key: ValueKey('bubble_${msg.id}'),
           message: msg,
           showTimestamp: showTimestamp || customTimestampText != null,
@@ -672,24 +601,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       right: 20.0,
       child: IgnorePointer(
         ignoring: true,
-        child: FadeSlideIn(
-          duration: const Duration(milliseconds: 300),
-          child: Center(
-            child: GlassCard(
+        child: Center(
+          child: FakeGlass(
+            shape: const LiquidRoundedSuperellipse(borderRadius: 14),
+            settings: GlassTheme.card,
+            child: Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              borderRadius: 14.0,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(Icons.cloud_off,
-                      size: 16.0, color: EdenColors.textSecondary),
+                      size: 16.0, color: Colors.white60),
                   const SizedBox(width: 8.0),
-                  Text(
-                    "no connection",
-                    style: EdenTypography.bodySm
-                        .copyWith(color: EdenColors.textSecondary),
-                  ),
+                  Text('no connection',
+                      style: _bodyStyle(12, color: Colors.white60)),
                 ],
               ),
             ),
@@ -709,121 +635,183 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       bottom: 0,
       left: 0,
       right: 0,
-      child: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 8.0, sigmaY: 8.0),
-          child: Container(
-            color: EdenColors.glassLight,
-            padding: EdgeInsets.only(
-              left: 16.0,
-              right: 16.0,
-              top: 8.0,
-              bottom: MediaQuery.of(context).padding.bottom + 8.0,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16.0,
+          right: 16.0,
+          top: 8.0,
+          bottom: MediaQuery.of(context).padding.bottom + 8.0,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (isComposing && isTyping)
+              Padding(
+                padding: const EdgeInsets.only(left: 20.0, bottom: 6.0),
+                child: Text(
+                  '$partnerName is typing...',
+                  style: _bodyStyle(12, color: Colors.white60)
+                      .copyWith(fontStyle: FontStyle.italic),
+                ),
+              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (isComposing && isTyping)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 20.0, bottom: 6.0),
-                    child: FadeSlideIn(
-                      duration: const Duration(milliseconds: 150),
-                      offsetY: 4.0,
-                      child: Text(
-                        '$partnerName is typing...',
-                        style: EdenTypography.bodySm.copyWith(
-                          color: EdenColors.textSecondary,
-                          fontStyle: FontStyle.italic,
+                Expanded(
+                  child: FakeGlass(
+                    shape: const LiquidRoundedSuperellipse(borderRadius: 20),
+                    settings: const LiquidGlassSettings(
+                      blur: 6,
+                      glassColor: Color(0x20FFFFFF),
+                    ),
+                    child: TextField(
+                      controller: _inputController,
+                      focusNode: _inputFocusNode,
+                      readOnly: isComposing,
+                      style: _bodyStyle(
+                        18,
+                        color: isComposing ? Colors.white60 : Colors.white,
+                      ),
+                      maxLines: 4,
+                      minLines: 1,
+                      cursorColor: EdenColors.electricBlue,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20.0,
+                          vertical: 12.0,
+                        ),
+                        hintText: 'message',
+                        hintStyle: _bodyStyle(
+                          18,
+                          color: Colors.white.withValues(alpha: 0.4),
                         ),
                       ),
                     ),
                   ),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: EdenColors.edenElevated,
-                          borderRadius: BorderRadius.circular(28.0),
-                        ),
-                        child: TextField(
-                          controller: _inputController,
-                          focusNode: _inputFocusNode,
-                          readOnly: isComposing,
-                          style: EdenTypography.bodyXl.copyWith(
-                            color: isComposing
-                                ? EdenColors.textSecondary
-                                : EdenColors.textPrimary,
-                          ),
-                          maxLines: 4,
-                          minLines: 1,
-                          cursorColor: EdenColors.edenIris,
-                          textCapitalization: TextCapitalization.sentences,
-                          decoration: InputDecoration(
-                            filled: true,
-                            fillColor: EdenColors.edenElevated,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 20.0, vertical: 12.0),
-                            hintText: '',
-                            // FIXED: focused border was edenIris (solid full-opacity violet).
-                            // Design spec says "focused: iris-dim" for input borders.
-                            focusedBorder: OutlineInputBorder(
-                              borderSide: const BorderSide(
-                                  color: EdenColors.edenIrisDim, width: 1.0),
-                              borderRadius: BorderRadius.circular(28.0),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderSide: const BorderSide(
-                                  color: EdenColors.edenRim, width: 1.0),
-                              borderRadius: BorderRadius.circular(28.0),
-                            ),
-                            disabledBorder: OutlineInputBorder(
-                              borderSide: const BorderSide(
-                                  color: EdenColors.edenRim, width: 1.0),
-                              borderRadius: BorderRadius.circular(28.0),
-                            ),
-                            border: OutlineInputBorder(
-                              borderSide: const BorderSide(
-                                  color: EdenColors.edenRim, width: 1.0),
-                              borderRadius: BorderRadius.circular(28.0),
-                            ),
+                ),
+                const SizedBox(width: 8.0),
+                AnimatedOpacity(
+                  opacity: (_showSendButton && !isComposing) ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: IgnorePointer(
+                    ignoring: !_showSendButton || isComposing,
+                    child: GlassGlow(
+                      glowColor: EdenColors.amberGlow,
+                      glowRadius: 0.8,
+                      child: FakeGlass(
+                        shape: const LiquidOval(),
+                        settings: GlassTheme.button,
+                        child: IconButton(
+                          onPressed: () => _sendMessage(),
+                          icon: const Icon(
+                            Icons.arrow_upward_rounded,
+                            color: Colors.white,
+                            size: 20,
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8.0),
-                    AnimatedOpacity(
-                      opacity: (_showSendButton && !isComposing) ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 200),
-                      child: IgnorePointer(
-                        ignoring: !_showSendButton || isComposing,
-                        child: GestureDetector(
-                          onTap: () => _sendMessage(),
-                          child: Container(
-                            width: 36,
-                            height: 36,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: EdenColors.edenIris,
-                            ),
-                            child: const Icon(
-                              Icons.arrow_upward,
-                              color: Colors.white,
-                              size: 18,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
-          ),
+          ],
         ),
       ),
     );
+  }
+}
+
+TextStyle _displayStyle(double size, {Color color = Colors.white}) {
+  return TextStyle(
+    fontFamily: 'CormorantGaramond',
+    fontWeight: FontWeight.w300,
+    fontSize: size,
+    color: color,
+    height: 1.12,
+  );
+}
+
+TextStyle _bodyStyle(double size, {Color color = Colors.white}) {
+  return TextStyle(
+    fontFamily: 'PlusJakartaSans',
+    fontWeight: FontWeight.w400,
+    fontSize: size,
+    color: color,
+    height: 1.45,
+  );
+}
+
+class _GlassMessageBubble extends StatelessWidget {
+  const _GlassMessageBubble({
+    super.key,
+    required this.message,
+    required this.showTimestamp,
+    this.customTimestampText,
+  });
+
+  final Message message;
+  final bool showTimestamp;
+  final String? customTimestampText;
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = message.isUser;
+
+    return Column(
+      crossAxisAlignment:
+          isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+      children: [
+        if (showTimestamp)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10.0),
+            child: Center(
+              child: Text(
+                customTimestampText ?? _formatTimestamp(message.sentAt),
+                style: _bodyStyle(11, color: Colors.white54),
+              ),
+            ),
+          ),
+        Align(
+          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            margin: EdgeInsets.only(
+              left: isUser ? 56.0 : 20.0,
+              right: isUser ? 20.0 : 56.0,
+              top: 4.0,
+              bottom: 4.0,
+            ),
+            child: FakeGlass(
+              shape: const LiquidRoundedSuperellipse(borderRadius: 16),
+              settings: LiquidGlassSettings(
+                thickness: 18,
+                blur: 12,
+                glassColor:
+                    isUser ? const Color(0x20FFFFFF) : const Color(0x10FFFFFF),
+                saturation: 1.3,
+                refractiveIndex: 1.45,
+                lightIntensity: 1.3,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Text(message.content, style: _bodyStyle(16)),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatTimestamp(DateTime time) {
+    final hour = time.hour % 12 == 0 ? 12 : time.hour % 12;
+    final minute = time.minute.toString().padLeft(2, '0');
+    final suffix = time.hour >= 12 ? 'pm' : 'am';
+    return '$hour:$minute $suffix';
   }
 }

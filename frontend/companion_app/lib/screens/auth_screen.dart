@@ -1,27 +1,15 @@
-// ═══════════════════════════════════════════════════════════════════
-// FILE: screens/auth_screen.dart
-// PURPOSE: Sign in / sign up. No distinction between the two — just "Begin."
-// CONTEXT: Shown when user is not authenticated. Routes to onboarding or chat.
-//
-// CHANGE LOG:
-//   • Added _entryFade AnimationController — fades the whole screen in
-//     over 350ms when mounted. This makes the transition from splash
-//     (which exits by blooming/dissolving) feel like one continuous world
-//     rather than a hard cut.
-//   • All other logic, layout, and styling unchanged from original.
-// ═══════════════════════════════════════════════════════════════════
-
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../theme/eden_colors.dart';
-import '../theme/eden_typography.dart';
+import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
+
 import '../main.dart';
 import '../services/auth_service.dart';
-import '../widgets/eden_button.dart';
-import '../widgets/atmospheric_background.dart';
-import '../widgets/glass_card.dart';
+import '../theme/eden_colors.dart';
+import '../theme/eden_typography.dart';
+import '../theme/glass_theme.dart';
 
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
@@ -32,12 +20,9 @@ class AuthScreen extends ConsumerStatefulWidget {
 
 class _AuthScreenState extends ConsumerState<AuthScreen>
     with TickerProviderStateMixin {
-  // changed from SingleTickerProviderStateMixin
-  // ── Entry fade (splash → auth) ──────────────────────────────────
   late final AnimationController _entryCtrl;
   late final Animation<double> _entryFade;
 
-  // ── Original state ───────────────────────────────────────────────
   bool _showEmailForm = false;
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -53,9 +38,6 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   void initState() {
     super.initState();
 
-    // Fade in over 350ms — starts immediately on mount.
-    // Splash exits at t=1.0 (logo dissolved), so by the time GoRouter
-    // has built this widget the screen is black; we then gently reveal.
     _entryCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 350),
@@ -192,51 +174,67 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     return FadeTransition(
       opacity: _entryFade,
       child: Scaffold(
-        backgroundColor: EdenColors.edenVoid,
-        body: AtmosphericBackground(
-          child: SafeArea(
-            child: CustomScrollView(
-              physics: const ClampingScrollPhysics(),
-              slivers: [
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 28.0, vertical: 32.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        const Spacer(flex: 3),
-                        Image.asset(
-                          'assets/images/eden_logo.png',
-                          width: 80,
-                          height: 80,
-                          fit: BoxFit.contain,
-                        ),
-                        const SizedBox(height: 24.0),
-                        Text(
-                          'Eden',
-                          style: EdenTypography.displayXl.copyWith(
-                            color: EdenColors.textPrimary,
-                            letterSpacing: -0.5,
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: CustomScrollView(
+            physics: const ClampingScrollPhysics(),
+            slivers: [
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 28.0,
+                    vertical: 32.0,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      const Spacer(flex: 3),
+                      FakeGlass(
+                        shape: const LiquidOval(),
+                        settings: GlassTheme.button,
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Image.asset(
+                            'assets/images/eden_logo.png',
+                            width: 80,
+                            height: 80,
+                            fit: BoxFit.contain,
                           ),
                         ),
-                        const SizedBox(height: 8.0),
-                        Text(
-                          'Begin.',
-                          style: EdenTypography.bodyMd.copyWith(
-                            color: EdenColors.textSecondary,
-                            letterSpacing: 0.5,
-                            fontWeight: FontWeight.w300,
-                          ),
+                      ),
+                      const SizedBox(height: 24.0),
+                      Text(
+                        'Eden',
+                        style: EdenTypography.displayXl.copyWith(
+                          color: Colors.white,
+                          shadows: [
+                            Shadow(
+                              color: EdenColors.electricBlue
+                                  .withValues(alpha: 0.6),
+                              blurRadius: 20,
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 48.0),
-                        AnimatedSize(
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                          child: GlassCard(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 24.0, vertical: 28.0),
+                      ),
+                      const SizedBox(height: 8.0),
+                      Text(
+                        'Begin.',
+                        style: EdenTypography.bodyMd.copyWith(
+                          color: Colors.white70,
+                          letterSpacing: 0.5,
+                          fontWeight: FontWeight.w300,
+                        ),
+                      ),
+                      const SizedBox(height: 48.0),
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        child: LiquidGlass.withOwnLayer(
+                          shape: GlassTheme.shape,
+                          settings: GlassTheme.prominent,
+                          child: Padding(
+                            padding: const EdgeInsets.all(28.0),
                             child: AnimatedSwitcher(
                               duration: const Duration(milliseconds: 250),
                               transitionBuilder:
@@ -247,9 +245,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                                     position: Tween<Offset>(
                                       begin: const Offset(0.0, 0.03),
                                       end: Offset.zero,
-                                    ).animate(CurvedAnimation(
+                                    ).animate(
+                                      CurvedAnimation(
                                         parent: animation,
-                                        curve: Curves.easeOutCubic)),
+                                        curve: Curves.easeOutCubic,
+                                      ),
+                                    ),
                                     child: child,
                                   ),
                                 );
@@ -260,24 +261,23 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                             ),
                           ),
                         ),
-                        if (_errorMessage != null &&
-                            !_errorIsWrongPassword) ...[
-                          const SizedBox(height: 24.0),
-                          Text(
-                            _errorMessage!.toLowerCase(),
-                            style: EdenTypography.bodySm.copyWith(
-                              color: EdenColors.textSecondary,
-                            ),
-                            textAlign: TextAlign.center,
+                      ),
+                      if (_errorMessage != null && !_errorIsWrongPassword) ...[
+                        const SizedBox(height: 24.0),
+                        Text(
+                          _errorMessage!.toLowerCase(),
+                          style: EdenTypography.bodySm.copyWith(
+                            color: Colors.white60,
                           ),
-                        ],
-                        const Spacer(flex: 5),
+                          textAlign: TextAlign.center,
+                        ),
                       ],
-                    ),
+                      const Spacer(flex: 5),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -289,23 +289,37 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       key: const ValueKey('oauth_menu'),
       mainAxisSize: MainAxisSize.min,
       children: [
-        EdenSecondaryButton(
+        _GlassAuthButton(
+          glowColor: EdenColors.amberGlow,
           onTap: _handleGoogleSignIn,
-          width: double.infinity,
-          icon: Image.asset(
-            'assets/images/google_logo.png',
-            width: 20.0,
-            height: 20.0,
-            errorBuilder: (_, __, ___) => const Icon(
-              Icons.g_mobiledata,
-              color: Colors.white,
-              size: 20,
-            ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Image.asset(
+                'assets/images/google_logo.png',
+                width: 20.0,
+                height: 20.0,
+                errorBuilder: (_, __, ___) => const Icon(
+                  Icons.g_mobiledata,
+                  color: Colors.white,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12.0),
+              Text(
+                'Continue with Google',
+                style: EdenTypography.bodyLg.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
-          text: 'Continue with Google',
         ),
         const SizedBox(height: 12.0),
-        EdenSecondaryButton(
+        _GlassAuthButton(
+          glowColor: EdenColors.electricBlue,
           onTap: () {
             setState(() {
               _showEmailForm = true;
@@ -313,8 +327,13 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               _errorIsWrongPassword = false;
             });
           },
-          width: double.infinity,
-          text: 'Use email instead',
+          child: Text(
+            'Use email instead',
+            style: EdenTypography.bodyLg.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
       ],
     );
@@ -328,55 +347,57 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          TextFormField(
-            controller: _emailController,
-            keyboardType: TextInputType.emailAddress,
-            autofillHints: const [AutofillHints.email],
-            style:
-                EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
-            cursorColor: EdenColors.edenIris,
-            decoration: _buildInputDecoration(hintText: 'email'),
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'please enter your email';
-              }
-              return null;
-            },
+          _GlassInput(
+            child: TextFormField(
+              controller: _emailController,
+              keyboardType: TextInputType.emailAddress,
+              autofillHints: const [AutofillHints.email],
+              style: EdenTypography.bodyXl.copyWith(color: Colors.white),
+              cursorColor: EdenColors.electricBlue,
+              decoration: _buildInputDecoration(hintText: 'email'),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'please enter your email';
+                }
+                return null;
+              },
+            ),
           ),
           const SizedBox(height: 16.0),
-          TextFormField(
-            controller: _passwordController,
-            obscureText: _obscurePassword,
-            autofillHints: const [AutofillHints.password],
-            style:
-                EdenTypography.bodyXl.copyWith(color: EdenColors.textPrimary),
-            cursorColor: EdenColors.edenIris,
-            decoration: _buildInputDecoration(
-              hintText: 'password',
-              suffixIcon: IconButton(
-                icon: Icon(
-                  _obscurePassword
-                      ? Icons.visibility_off_outlined
-                      : Icons.visibility_outlined,
-                  color: EdenColors.textSecondary,
-                  size: 20,
+          _GlassInput(
+            child: TextFormField(
+              controller: _passwordController,
+              obscureText: _obscurePassword,
+              autofillHints: const [AutofillHints.password],
+              style: EdenTypography.bodyXl.copyWith(color: Colors.white),
+              cursorColor: EdenColors.electricBlue,
+              decoration: _buildInputDecoration(
+                hintText: 'password',
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    color: Colors.white60,
+                    size: 20,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _obscurePassword = !_obscurePassword;
+                    });
+                  },
                 ),
-                onPressed: () {
-                  setState(() {
-                    _obscurePassword = !_obscurePassword;
-                  });
-                },
               ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'please enter your password';
+                }
+                if (value.length < 6) {
+                  return 'password must be at least 6 characters';
+                }
+                return null;
+              },
             ),
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'please enter your password';
-              }
-              if (value.length < 6) {
-                return 'password must be at least 6 characters';
-              }
-              return null;
-            },
           ),
           if (_errorIsWrongPassword) ...[
             const SizedBox(height: 12.0),
@@ -387,18 +408,32 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 child: Text(
                   'incorrect password.',
                   style: EdenTypography.bodySm.copyWith(
-                    color: EdenColors.textSecondary,
+                    color: Colors.white60,
                   ),
                 ),
               ),
             ),
           ],
           const SizedBox(height: 28.0),
-          EdenPrimaryButton(
-            text: 'Continue',
+          _GlassAuthButton(
+            glowColor: EdenColors.orangeGlow,
             onTap: _handleEmailAuth,
-            isLoading: _isLoading,
-            width: double.infinity,
+            child: _isLoading
+                ? const SizedBox(
+                    width: 20.0,
+                    height: 20.0,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.0,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : Text(
+                    'Continue',
+                    style: EdenTypography.bodyLg.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
           ),
           const SizedBox(height: 16.0),
           GestureDetector(
@@ -416,7 +451,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               child: Text(
                 'cancel',
                 style: EdenTypography.bodyMd.copyWith(
-                  color: EdenColors.textSecondary,
+                  color: Colors.white60,
                   letterSpacing: 1.0,
                 ),
               ),
@@ -428,51 +463,90 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
   }
 
   InputDecoration _buildInputDecoration({
-    required String hintText, // kept for internal use, but we won't show it
+    required String hintText,
     Widget? suffixIcon,
   }) {
     return InputDecoration(
-      hintText: '', // NO placeholder text
+      hintText: hintText,
       hintStyle: EdenTypography.bodyLg.copyWith(
-        color: EdenColors.textTertiary,
-        height: 0, // make hint invisible
+        color: Colors.white.withValues(alpha: 0.4),
       ),
       floatingLabelBehavior: FloatingLabelBehavior.never,
       suffixIcon: suffixIcon,
-      filled: true,
-      fillColor: EdenColors.edenElevated,
+      filled: false,
       contentPadding: const EdgeInsets.symmetric(
-        horizontal: 24.0,
+        horizontal: 20.0,
         vertical: 16.0,
       ),
-      focusedBorder: OutlineInputBorder(
-        borderSide: const BorderSide(
-          color: EdenColors.edenIrisDim,
-          width: 1.0,
-        ),
-        borderRadius: BorderRadius.circular(999.0), // pill shape
+      border: InputBorder.none,
+      enabledBorder: InputBorder.none,
+      focusedBorder: InputBorder.none,
+      errorBorder: InputBorder.none,
+      focusedErrorBorder: InputBorder.none,
+      errorStyle: EdenTypography.bodySm.copyWith(
+        color: Colors.white60,
       ),
-      enabledBorder: OutlineInputBorder(
-        borderSide: const BorderSide(
-          color: EdenColors.edenRim,
-          width: 1.0,
+    );
+  }
+}
+
+class _GlassAuthButton extends StatelessWidget {
+  const _GlassAuthButton({
+    required this.glowColor,
+    required this.onTap,
+    required this.child,
+  });
+
+  final Color glowColor;
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GlassGlow(
+          glowColor: glowColor,
+          glowRadius: 0.9,
+          child: FakeGlass(
+            shape: const LiquidRoundedSuperellipse(borderRadius: 20),
+            settings: GlassTheme.button,
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(20),
+              child: SizedBox(
+                width: double.infinity,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20.0,
+                    vertical: 16.0,
+                  ),
+                  child: Center(child: child),
+                ),
+              ),
+            ),
+          ),
         ),
-        borderRadius: BorderRadius.circular(999.0),
+      ],
+    );
+  }
+}
+
+class _GlassInput extends StatelessWidget {
+  const _GlassInput({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return FakeGlass(
+      shape: const LiquidRoundedSuperellipse(borderRadius: 16),
+      settings: const LiquidGlassSettings(
+        blur: 6,
+        glassColor: Color(0x20FFFFFF),
       ),
-      errorBorder: OutlineInputBorder(
-        borderSide: const BorderSide(
-          color: EdenColors.semanticError,
-          width: 1.0,
-        ),
-        borderRadius: BorderRadius.circular(999.0),
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderSide: const BorderSide(
-          color: EdenColors.semanticError,
-          width: 1.0,
-        ),
-        borderRadius: BorderRadius.circular(999.0),
-      ),
+      child: child,
     );
   }
 }
