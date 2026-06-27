@@ -14,8 +14,11 @@ import '../main.dart';
 import '../models/models.dart';
 import '../services/local_cache_service.dart';
 
-final localCacheServiceProvider =
-    Provider<LocalCacheService>((ref) => LocalCacheService());
+final localCacheServiceProvider = Provider<LocalCacheService>((ref) {
+  final service = LocalCacheService();
+  ref.onDispose(service.dispose);
+  return service;
+});
 
 final isTypingProvider = StateProvider<bool>((ref) => false);
 final streamingTextProvider = StateProvider<String>((ref) => '');

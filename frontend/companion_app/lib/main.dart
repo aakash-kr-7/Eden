@@ -44,8 +44,9 @@ final apiServiceProvider = Provider<ApiService>((ref) {
 });
 
 final notificationServiceProvider = Provider<NotificationService>((ref) {
-  final apiService = ref.watch(apiServiceProvider);
-  return NotificationService(apiService);
+  final service = NotificationService(ref.watch(apiServiceProvider));
+  ref.onDispose(service.dispose);
+  return service;
 });
 
 class AppRoute {
@@ -152,11 +153,11 @@ CustomTransitionPage<void> _buildOverlayPage(
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
       final fade = CurvedAnimation(
         parent: animation,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
+        curve: Curves.easeOut,
+        reverseCurve: Curves.easeIn,
       );
       final slide = Tween<Offset>(
-        begin: const Offset(0, 0.015),
+        begin: const Offset(0, 0.012),
         end: Offset.zero,
       ).animate(fade);
 

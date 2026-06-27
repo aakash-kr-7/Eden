@@ -9,7 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:video_player/video_player.dart';
 
 import '../main.dart';
-import '../theme/eden_colors.dart';
+import '../theme/nocturne.dart';
 
 class BootScreen extends StatefulWidget {
   const BootScreen({super.key});
@@ -74,7 +74,7 @@ class _BootScreenState extends State<BootScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: EdenColors.edenVoid,
+      backgroundColor: Nocturne.black,
       body: Center(
         child: _controller.value.isInitialized
             ? AspectRatio(

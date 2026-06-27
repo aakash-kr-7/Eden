@@ -53,11 +53,12 @@ class Nocturne {
   static const double iconXl = 24;
   static const double iconHero = 44;
 
-  static const Duration durationFast = Duration(milliseconds: 140);
-  static const Duration durationStandard = Duration(milliseconds: 220);
-  static const Duration durationSlow = Duration(milliseconds: 360);
-  static const Duration durationCinematic = Duration(milliseconds: 900);
-  static const Duration durationAmbient = Duration(milliseconds: 1500);
+  static const Duration durationFast = Duration(milliseconds: 150);
+  static const Duration durationStandard = Duration(milliseconds: 250);
+  static const Duration durationSlow = Duration(milliseconds: 400);
+  static const Duration durationSettled = Duration(milliseconds: 600);
+  static const Duration durationCinematic = Duration(milliseconds: 600);
+  static const Duration durationAmbient = Duration(milliseconds: 600);
 
   static const LinearGradient heroAccent = LinearGradient(
     begin: Alignment.topLeft,

@@ -1,26 +1,15 @@
-// ═══════════════════════════════════════════════════════════════════
 // FILE: screens/splash_screen.dart
-// PURPOSE: A tasteful, minimal Eden splash.
-//          Soft radial glow → logo materialises → gentle breath →
-//          bloom exit. Total ~4s. No skip.
-// ═══════════════════════════════════════════════════════════════════
-
-// RESPONSIBILITIES: Play the splash sequence and hand off into auth or chat.
-// NEVER: Contain backend logic or persistent app state ownership.
+// PURPOSE: Deliver a luxurious handoff from boot into the app's auth or chat flow.
+// RESPONSIBILITIES: Play a brief cinematic splash and navigate using existing auth state.
+// NEVER: Own backend logic, persistent state, or route decisions beyond the existing handoff.
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../main.dart';
-import '../theme/eden_colors.dart';
-
-// ─── Timing (4000ms controller) ─────────────────────────────────────
-// Phase 1 — background glow breathes in:   0.00 → 0.40
-// Phase 2 — logo materialises:             0.20 → 0.60
-// Phase 3 — hold with subtle shimmer:      0.60 → 0.85
-// Phase 4 — bloom out + fade:              0.85 → 1.00
-// ─────────────────────────────────────────────────────────────────────
+import '../theme/nocturne.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
@@ -31,21 +20,13 @@ class SplashScreen extends ConsumerStatefulWidget {
 
 class _SplashScreenState extends ConsumerState<SplashScreen>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-
-  // ── Phase 1: ambient glow ────────────────────────────────────────
-  late final Animation<double> _glowIntensity;
-
-  // ── Phase 2: logo entrance ───────────────────────────────────────
+  late final AnimationController _controller;
+  late final Animation<double> _glow;
   late final Animation<double> _logoOpacity;
   late final Animation<double> _logoScale;
-
-  // ── Phase 3: subtle shimmer on the celestial body ────────────────
-  late final Animation<double> _shimmer;
-
-  // ── Phase 4: bloom exit ──────────────────────────────────────────
-  late final Animation<double> _exitBloom;
-  late final Animation<double> _exitOpacity;
+  late final Animation<double> _wordOpacity;
+  late final Animation<double> _wordOffset;
+  late final Animation<double> _fadeOut;
 
   bool _hasNavigated = false;
 
@@ -53,159 +34,139 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   void initState() {
     super.initState();
 
-    _ctrl = AnimationController(
+    _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 4000),
+      duration: const Duration(milliseconds: 2400),
     );
 
-    // Phase 1: soft radial glow breathes in
-    _glowIntensity = CurvedAnimation(
-      parent: _ctrl,
-      curve: const Interval(0.00, 0.40, curve: Curves.easeOut),
+    _glow = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.0, 0.58, curve: Curves.easeOut),
     );
-
-    // Phase 2: logo fades in and gently scales up
     _logoOpacity = CurvedAnimation(
-      parent: _ctrl,
-      curve: const Interval(0.20, 0.60, curve: Curves.easeOutCubic),
+      parent: _controller,
+      curve: const Interval(0.12, 0.44, curve: Curves.easeOut),
     );
-    _logoScale = Tween<double>(begin: 0.88, end: 1.0).animate(
+    _logoScale = Tween<double>(begin: 0.92, end: 1.0).animate(
       CurvedAnimation(
-        parent: _ctrl,
-        curve: const Interval(0.20, 0.55, curve: Curves.easeOutCubic),
+        parent: _controller,
+        curve: const Interval(0.12, 0.52, curve: Curves.easeOut),
+      ),
+    );
+    _wordOpacity = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.28, 0.64, curve: Curves.easeOut),
+    );
+    _wordOffset = Tween<double>(begin: 16, end: 0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.28, 0.64, curve: Curves.easeOut),
+      ),
+    );
+    _fadeOut = Tween<double>(begin: 1, end: 0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.84, 1.0, curve: Curves.easeIn),
       ),
     );
 
-    // Phase 3: celestial body shimmer – subtle opacity pulse
-    _shimmer = CurvedAnimation(
-      parent: _ctrl,
-      curve: const Interval(0.60, 0.85, curve: Curves.easeInOut),
-    );
-
-    // Phase 4: bloom (scale + fade out together)
-    _exitBloom = Tween<double>(begin: 1.0, end: 1.2).animate(
-      CurvedAnimation(
-        parent: _ctrl,
-        curve: const Interval(0.85, 1.00, curve: Curves.easeIn),
-      ),
-    );
-    _exitOpacity = Tween<double>(begin: 1.0, end: 0.0).animate(
-      CurvedAnimation(
-        parent: _ctrl,
-        curve: const Interval(0.85, 1.00, curve: Curves.easeIn),
-      ),
-    );
-
-    _ctrl.addStatusListener((status) {
+    _controller.addStatusListener((status) {
       if (status == AnimationStatus.completed && !_hasNavigated) {
         _navigate();
       }
     });
 
-    _ctrl.forward();
+    _controller.forward();
   }
 
   Future<void> _navigate() async {
-    if (_hasNavigated) return;
+    if (_hasNavigated || !mounted) return;
     _hasNavigated = true;
-    if (!mounted) return;
 
     final authService = ref.read(authServiceProvider);
-    final isAuth = authService.currentUser != null;
+    final isAuthenticated = authService.currentUser != null;
 
-    await Future.delayed(const Duration(milliseconds: 80));
+    await Future<void>.delayed(const Duration(milliseconds: 70));
     if (!mounted) return;
 
-    context.go(isAuth ? AppRoute.chat : AppRoute.auth);
+    context.go(isAuthenticated ? AppRoute.chat : AppRoute.auth);
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: EdenColors.edenVoid,
+      backgroundColor: Colors.black,
       body: AnimatedBuilder(
-        animation: _ctrl,
+        animation: _controller,
         builder: (context, child) {
-          // Glow intensity during phase 1 (sinusoidal breathing feel)
-          final glow = _glowIntensity.value > 0
-              ? 0.3 + 0.2 * math.sin(_glowIntensity.value * math.pi * 1.5)
-              : 0.0;
+          final ambientPulse = _glow.value == 0
+              ? 0.0
+              : 0.72 + (math.sin(_glow.value * math.pi * 1.8) * 0.18);
 
-          // Shimmer during phase 3: subtle light pulse on the logo
-          final shimmerVal = _shimmer.value > 0
-              ? 0.5 + 0.5 * math.sin(_shimmer.value * math.pi * 2)
-              : 0.0;
-
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              // ── Layer 1: Soft ambient radial glow ──────────────────
-              if (glow > 0)
+          return Opacity(
+            opacity: _fadeOut.value,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                const ColoredBox(color: Colors.black),
                 Center(
                   child: Container(
-                    width: 280,
-                    height: 280,
+                    width: 320,
+                    height: 320,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: RadialGradient(
                         colors: [
-                          EdenColors.edenBlush.withValues(alpha: 0.15 * glow),
-                          EdenColors.edenIris.withValues(alpha: 0.08 * glow),
+                          Nocturne.accentWarm
+                              .withValues(alpha: 0.10 * ambientPulse),
+                          Nocturne.accentCool
+                              .withValues(alpha: 0.08 * ambientPulse),
                           Colors.transparent,
                         ],
-                        stops: const [0.0, 0.6, 1.0],
+                        stops: const [0.0, 0.45, 1.0],
                       ),
                     ),
                   ),
                 ),
-
-              // ── Layer 2: Logo (with gentle shimmer overlay) ────────
-              Center(
-                child: Opacity(
-                  opacity:
-                      (_logoOpacity.value * _exitOpacity.value).clamp(0.0, 1.0),
+                Center(
                   child: Transform.scale(
-                    scale: _logoScale.value * _exitBloom.value,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        // The logo image (hand cradling a glowing celestial body)
-                        Image.asset(
-                          'assets/icon/app_icon.png',
-                          width: 120,
-                          height: 120,
-                          fit: BoxFit.contain,
-                          filterQuality: FilterQuality.high,
-                        ),
-                        // A subtle, breathing light overlay on the logo
-                        if (shimmerVal > 0)
-                          Container(
-                            width: 120,
-                            height: 120,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: [
-                                  EdenColors.edenGold
-                                      .withValues(alpha: 0.12 * shimmerVal),
-                                  Colors.transparent,
-                                ],
-                                stops: const [0.4, 1.0],
-                              ),
-                            ),
-                          ),
-                      ],
+                    scale: _logoScale.value,
+                    child: Opacity(
+                      opacity: _logoOpacity.value,
+                      child: Image.asset(
+                        'assets/icon/app_icon.png',
+                        width: 122,
+                        height: 122,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+                Align(
+                  alignment: const Alignment(0, 0.28),
+                  child: Transform.translate(
+                    offset: Offset(0, _wordOffset.value),
+                    child: Opacity(
+                      opacity: _wordOpacity.value,
+                      child: Text(
+                        'Eden',
+                        style: Nocturne.displayLg.copyWith(
+                          fontSize: 42,
+                          letterSpacing: -0.7,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           );
         },
       ),

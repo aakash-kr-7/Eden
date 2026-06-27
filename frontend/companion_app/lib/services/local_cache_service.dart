@@ -41,4 +41,9 @@ class LocalCacheService {
       await db.messages.clear();
     });
   }
+
+  void dispose() {
+    _isar?.close();
+    _isar = null;
+  }
 }

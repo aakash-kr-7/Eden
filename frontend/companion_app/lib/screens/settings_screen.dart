@@ -13,6 +13,7 @@ import 'package:share_plus/share_plus.dart';
 import '../main.dart';
 import '../theme/eden_colors.dart';
 import '../theme/glass_theme.dart';
+import '../theme/nocturne.dart';
 import '../components/glass.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -262,47 +263,56 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       barrierDismissible: true,
       barrierLabel: 'overlay_confirm',
       barrierColor: Colors.black.withValues(alpha: 0.7),
-      transitionDuration: const Duration(milliseconds: 250),
+      transitionDuration: Nocturne.durationStandard,
       pageBuilder: (context, anim1, anim2) {
         return Center(
-          child: ScaleTransition(
-            scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-            child: LiquidGlass.withOwnLayer(
-              shape: GlassTheme.shape,
-              settings: GlassTheme.prominent,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(title,
-                        style: _displayStyle(26), textAlign: TextAlign.center),
-                    const SizedBox(height: 12),
-                    Text(content,
-                        style: _bodyStyle(14, color: Colors.white70),
-                        textAlign: TextAlign.center),
-                    const SizedBox(height: 28),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () => Navigator.of(context).pop(false),
-                            child: Text('Cancel',
-                                style: _bodyStyle(15, color: Colors.white70)),
+          child: FadeTransition(
+            opacity: CurvedAnimation(parent: anim1, curve: Curves.easeOut),
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.02),
+                end: Offset.zero,
+              ).animate(
+                CurvedAnimation(parent: anim1, curve: Curves.easeOut),
+              ),
+              child: LiquidGlass.withOwnLayer(
+                shape: GlassTheme.shape,
+                settings: GlassTheme.prominent,
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(title,
+                          style: _displayStyle(26),
+                          textAlign: TextAlign.center),
+                      const SizedBox(height: 12),
+                      Text(content,
+                          style: _bodyStyle(14, color: Colors.white70),
+                          textAlign: TextAlign.center),
+                      const SizedBox(height: 28),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              onPressed: () => Navigator.of(context).pop(false),
+                              child: Text('Cancel',
+                                  style: _bodyStyle(15, color: Colors.white70)),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: _GlassButton(
-                            label: confirmLabel,
-                            glowColor: EdenColors.orangeGlow,
-                            onTap: () => Navigator.of(context).pop(true),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: _GlassButton(
+                              label: confirmLabel,
+                              glowColor: EdenColors.orangeGlow,
+                              onTap: () => Navigator.of(context).pop(true),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -316,7 +326,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: EdenColors.orangeGlow,
+        backgroundColor: Nocturne.bgElevated,
       ),
     );
   }
@@ -377,124 +387,136 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              size: 16, color: Colors.white),
+              size: Nocturne.iconMd, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
       body: SafeArea(
-        child: ListView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(24, 12, 24, 48),
-          children: [
-            Text(
-              'Profile',
-              style: _bodyStyle(24).copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 24),
-            _buildSectionLabel('your connection'),
-            _GlassSettingsCard(
-              child: Column(
-                children: [
-                  SettingsRow(label: 'Partner', rightText: _partnerName),
-                  _divider(),
-                  SettingsRow(
-                      label: 'Relationship stage',
-                      rightText: _relationshipStage.toLowerCase()),
-                  _divider(),
-                  SettingsRow(
-                      label: 'Days together', rightText: '$_daysTogether days'),
-                  _divider(),
-                  SettingsRow(
-                    label: 'Memory count',
-                    rightText: '$_memoryCount items',
-                    icon: Icons.chevron_right_rounded,
-                    onTap: () => context
-                        .push(AppRoute.memory)
-                        .then((_) => _fetchProfileData()),
-                  ),
-                ],
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: ListView(
+              physics: const ClampingScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(
+                Nocturne.space8,
+                Nocturne.space4,
+                Nocturne.space8,
+                Nocturne.space9,
               ),
+              children: [
+                const Text(
+                  'Profile',
+                  style: Nocturne.displayMd,
+                ),
+                const SizedBox(height: Nocturne.space7),
+                _buildSectionLabel('your connection'),
+                _GlassSettingsCard(
+                  child: Column(
+                    children: [
+                      SettingsRow(label: 'Partner', rightText: _partnerName),
+                      _divider(),
+                      SettingsRow(
+                          label: 'Relationship stage',
+                          rightText: _relationshipStage.toLowerCase()),
+                      _divider(),
+                      SettingsRow(
+                          label: 'Days together',
+                          rightText: '$_daysTogether days'),
+                      _divider(),
+                      SettingsRow(
+                        label: 'Memory count',
+                        rightText: '$_memoryCount items',
+                        icon: Icons.chevron_right_rounded,
+                        onTap: () => context
+                            .push(AppRoute.memory)
+                            .then((_) => _fetchProfileData()),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: Nocturne.space4),
+                _buildSectionLabel('how you talk'),
+                _GlassSettingsCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(Nocturne.space5),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Communication pace',
+                                style: _bodyStyle(13, color: Colors.white70)),
+                            const SizedBox(height: Nocturne.space4),
+                            _buildSegmentedPaceSelector(),
+                          ],
+                        ),
+                      ),
+                      _divider(),
+                      _buildToggleRow(
+                        title: 'Proactive',
+                        value: _notifProactive,
+                        onChanged: (val) => _updateNotifPrefs(proactive: val),
+                      ),
+                      _divider(),
+                      _buildToggleRow(
+                        title: 'Follow-ups',
+                        value: _notifFollowUp,
+                        onChanged: (val) =>
+                            _updateNotifPrefs(emotionalFollowup: val),
+                      ),
+                      _divider(),
+                      _buildToggleRow(
+                        title: 'Anniversaries',
+                        value: _notifAnniversaries,
+                        onChanged: (val) =>
+                            _updateNotifPrefs(anniversaries: val),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: Nocturne.space4),
+                _buildSectionLabel('your data'),
+                _GlassSettingsCard(
+                  child: Column(
+                    children: [
+                      SettingsRow(
+                        label: 'Your memories',
+                        icon: Icons.chevron_right_rounded,
+                        onTap: () => context
+                            .push(AppRoute.memory)
+                            .then((_) => _fetchProfileData()),
+                      ),
+                      _divider(),
+                      SettingsRow(
+                        label: 'Export my data',
+                        icon: Icons.chevron_right_rounded,
+                        onTap: _handleExportData,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: Nocturne.space4),
+                _buildSectionLabel('account'),
+                _GlassSettingsCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildEditableNameRow(),
+                      _divider(),
+                      _buildDeleteEverythingRow(),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: Nocturne.space7),
+                _GlassButton(
+                  label: 'Sign out',
+                  glowColor: EdenColors.amberGlow,
+                  onTap: _handleSignOut,
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-            _buildSectionLabel('how you talk'),
-            _GlassSettingsCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Communication pace',
-                            style: _bodyStyle(13, color: Colors.white70)),
-                        const SizedBox(height: 12),
-                        _buildSegmentedPaceSelector(),
-                      ],
-                    ),
-                  ),
-                  _divider(),
-                  _buildToggleRow(
-                    title: 'Proactive',
-                    value: _notifProactive,
-                    onChanged: (val) => _updateNotifPrefs(proactive: val),
-                  ),
-                  _divider(),
-                  _buildToggleRow(
-                    title: 'Follow-ups',
-                    value: _notifFollowUp,
-                    onChanged: (val) =>
-                        _updateNotifPrefs(emotionalFollowup: val),
-                  ),
-                  _divider(),
-                  _buildToggleRow(
-                    title: 'Anniversaries',
-                    value: _notifAnniversaries,
-                    onChanged: (val) => _updateNotifPrefs(anniversaries: val),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildSectionLabel('your data'),
-            _GlassSettingsCard(
-              child: Column(
-                children: [
-                  SettingsRow(
-                    label: 'Your memories',
-                    icon: Icons.chevron_right_rounded,
-                    onTap: () => context
-                        .push(AppRoute.memory)
-                        .then((_) => _fetchProfileData()),
-                  ),
-                  _divider(),
-                  SettingsRow(
-                    label: 'Export my data',
-                    icon: Icons.chevron_right_rounded,
-                    onTap: _handleExportData,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildSectionLabel('account'),
-            _GlassSettingsCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildEditableNameRow(),
-                  _divider(),
-                  _buildDeleteEverythingRow(),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            _GlassButton(
-              label: 'Sign out',
-              glowColor: EdenColors.amberGlow,
-              onTap: _handleSignOut,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -502,11 +524,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _buildSectionLabel(String label) {
     return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 8, top: 12),
+      padding: const EdgeInsets.only(
+        left: Nocturne.space2,
+        bottom: Nocturne.space3,
+        top: Nocturne.space4,
+      ),
       child: Text(
         label,
-        style: _bodyStyle(12, color: Colors.white60).copyWith(
-          letterSpacing: 1.0,
+        style: Nocturne.label.copyWith(
+          color: Nocturne.textTertiary,
+          letterSpacing: 0.8,
         ),
       ),
     );
@@ -534,13 +561,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: GestureDetector(
                 onTap: () => _updateCommunicationPace(opt['value']!),
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
+                  duration: Nocturne.durationFast,
                   height: 38,
                   decoration: BoxDecoration(
                     color: isSelected
                         ? Colors.white.withValues(alpha: 0.18)
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(Nocturne.radiusSm - 2),
                   ),
                   child: Center(
                     child: Text(
@@ -569,7 +596,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     required ValueChanged<bool> onChanged,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(
+        horizontal: Nocturne.space5,
+        vertical: Nocturne.space4,
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -586,7 +616,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _buildEditableNameRow() {
     if (_isEditingName) {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.symmetric(
+          horizontal: Nocturne.space5,
+          vertical: Nocturne.space3,
+        ),
         child: Row(
           children: [
             Expanded(
@@ -610,11 +643,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
             ),
             IconButton(
-              icon: const Icon(Icons.check, color: Colors.white, size: 20),
+              icon: const Icon(Icons.check,
+                  color: Colors.white, size: Nocturne.iconLg),
               onPressed: _updateDisplayName,
             ),
             IconButton(
-              icon: const Icon(Icons.close, color: Colors.white60, size: 20),
+              icon: const Icon(Icons.close,
+                  color: Colors.white60, size: Nocturne.iconLg),
               onPressed: () {
                 setState(() {
                   _nameController.text = _displayName;
@@ -655,7 +690,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         if (_isDeleteExpanded)
           Padding(
-            padding: const EdgeInsets.only(left: 16, right: 16, bottom: 16),
+            padding: const EdgeInsets.only(
+              left: Nocturne.space5,
+              right: Nocturne.space5,
+              bottom: Nocturne.space5,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -733,9 +772,9 @@ class SettingsRow extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: SizedBox(
-        height: 56,
+        height: 58,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
+          padding: const EdgeInsets.symmetric(horizontal: Nocturne.space5),
           child: Row(
             children: [
               Expanded(child: Text(label, style: _bodyStyle(14))),
@@ -749,7 +788,7 @@ class SettingsRow extends StatelessWidget {
                 ),
               if (icon != null) ...[
                 const SizedBox(width: 8),
-                Icon(icon, size: 16, color: Colors.white60),
+                Icon(icon, size: Nocturne.iconSm, color: Colors.white60),
               ],
             ],
           ),
@@ -794,7 +833,7 @@ class _GlassSwitch extends StatelessWidget {
       child: GestureDetector(
         onTap: () => onChanged(!value),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
+          duration: Nocturne.durationFast,
           width: 52,
           height: 32,
           padding: const EdgeInsets.all(4),
@@ -862,21 +901,16 @@ class _GlassButton extends StatelessWidget {
 }
 
 TextStyle _displayStyle(double size, {Color color = Colors.white}) {
-  return TextStyle(
-    fontFamily: 'CormorantGaramond',
-    fontWeight: FontWeight.w300,
+  return Nocturne.displayMd.copyWith(
     fontSize: size,
     color: color,
-    height: 1.12,
   );
 }
 
 TextStyle _bodyStyle(double size, {Color color = Colors.white}) {
-  return TextStyle(
-    fontFamily: 'PlusJakartaSans',
-    fontWeight: FontWeight.w400,
+  return Nocturne.bodyMd.copyWith(
     fontSize: size,
     color: color,
-    height: 1.45,
+    fontWeight: FontWeight.w500,
   );
 }

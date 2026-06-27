@@ -312,7 +312,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
             .animateTo(
           target,
           duration: Nocturne.durationStandard,
-          curve: Curves.easeOutCubic,
+          curve: Curves.easeOut,
         )
             .then((_) {
           _markLastMessageAsRead();
@@ -451,9 +451,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(
-        Nocturne.space4,
+        Nocturne.space6,
         Nocturne.space5,
-        Nocturne.space4,
+        Nocturne.space6,
         Nocturne.space6,
       ),
       child: Row(
@@ -542,7 +542,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     return ListView.builder(
       controller: _scrollController,
-      physics: const BouncingScrollPhysics(),
+      physics: const ClampingScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(
         Nocturne.space8,
         Nocturne.space5,
@@ -778,7 +778,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
                     const SizedBox(width: Nocturne.space3),
                     AnimatedContainer(
                       duration: Nocturne.durationFast,
-                      curve: Curves.easeOutCubic,
+                      curve: Curves.easeOut,
                       width: 44,
                       height: 44,
                       decoration: BoxDecoration(

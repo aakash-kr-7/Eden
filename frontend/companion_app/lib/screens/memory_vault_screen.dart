@@ -138,15 +138,14 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
             child: FadeTransition(
               opacity: CurvedAnimation(
                 parent: animation,
-                curve: Curves.easeOutCubic,
+                curve: Curves.easeOut,
               ),
-              child: ScaleTransition(
-                scale: Tween<double>(
-                  begin: 0.96,
-                  end: 1,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.02),
+                  end: Offset.zero,
                 ).animate(
-                  CurvedAnimation(
-                      parent: animation, curve: Curves.easeOutCubic),
+                  CurvedAnimation(parent: animation, curve: Curves.easeOut),
                 ),
                 child: Container(
                   constraints: const BoxConstraints(maxWidth: 420),
@@ -218,7 +217,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
             const _VaultBackdrop(),
             CustomScrollView(
               controller: _scrollController,
-              physics: const BouncingScrollPhysics(),
+              physics: const ClampingScrollPhysics(),
               slivers: [
                 SliverToBoxAdapter(
                   child: _VaultHeader(
@@ -577,7 +576,7 @@ class _CategoryStrip extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: Nocturne.space8),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
+        physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.symmetric(horizontal: Nocturne.space8),
         child: Row(
           children: categories.map((category) {
@@ -589,7 +588,7 @@ class _CategoryStrip extends StatelessWidget {
                 borderRadius: BorderRadius.circular(Nocturne.radiusPill),
                 child: AnimatedContainer(
                   duration: Nocturne.durationFast,
-                  curve: Curves.easeOutCubic,
+                  curve: Curves.easeOut,
                   padding: const EdgeInsets.symmetric(
                     horizontal: Nocturne.space5,
                     vertical: Nocturne.space3,
@@ -1030,7 +1029,7 @@ class _MemoryDetailScreen extends StatelessWidget {
                       const SizedBox(height: Nocturne.space8),
                       Expanded(
                         child: SingleChildScrollView(
-                          physics: const BouncingScrollPhysics(),
+                          physics: const ClampingScrollPhysics(),
                           child: Text(
                             memory.memoryText,
                             style: Nocturne.bodyXl.copyWith(height: 1.7),

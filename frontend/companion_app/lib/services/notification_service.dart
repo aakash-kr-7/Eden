@@ -152,4 +152,8 @@ class NotificationService {
       ),
     );
   }
+
+  void dispose() {
+    _foregroundMessageController.close();
+  }
 }
