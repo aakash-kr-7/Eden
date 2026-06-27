@@ -9,10 +9,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../main.dart';
+import '../services/api_service.dart';
 import '../theme/nocturne.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
-  const SplashScreen({super.key});
+  const SplashScreen({
+    super.key,
+    this.animate = true,
+  });
+
+  final bool animate;
 
   @override
   ConsumerState<SplashScreen> createState() => _SplashScreenState();
@@ -76,7 +82,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       }
     });
 
-    _controller.forward();
+    if (widget.animate) {
+      _controller.forward();
+    } else {
+      _controller.value = 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _navigate());
+    }
   }
 
   Future<void> _navigate() async {
@@ -89,7 +100,23 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     await Future<void>.delayed(const Duration(milliseconds: 70));
     if (!mounted) return;
 
-    context.go(isAuthenticated ? AppRoute.chat : AppRoute.auth);
+    if (!isAuthenticated) {
+      context.go(AppRoute.auth);
+      return;
+    }
+
+    try {
+      final status = await ref.read(apiServiceProvider).onboardingStatus();
+      final isComplete = _statusFlag(status['complete']);
+      if (!mounted) return;
+      context.go(isComplete ? AppRoute.chat : AppRoute.onboarding);
+    } on ApiException {
+      if (!mounted) return;
+      context.go(AppRoute.chat);
+    } catch (_) {
+      if (!mounted) return;
+      context.go(AppRoute.chat);
+    }
   }
 
   @override
@@ -105,12 +132,19 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       body: AnimatedBuilder(
         animation: _controller,
         builder: (context, child) {
-          final ambientPulse = _glow.value == 0
-              ? 0.0
-              : 0.72 + (math.sin(_glow.value * math.pi * 1.8) * 0.18);
+          final ambientPulse = widget.animate
+              ? (_glow.value == 0
+                  ? 0.0
+                  : 0.72 + (math.sin(_glow.value * math.pi * 1.8) * 0.18))
+              : 0.0;
+          final surfaceOpacity = widget.animate ? _fadeOut.value : 1.0;
+          final logoOpacity = widget.animate ? _logoOpacity.value : 1.0;
+          final logoScale = widget.animate ? _logoScale.value : 1.0;
+          final wordOpacity = widget.animate ? _wordOpacity.value : 1.0;
+          final wordOffset = widget.animate ? _wordOffset.value : 0.0;
 
           return Opacity(
-            opacity: _fadeOut.value,
+            opacity: surfaceOpacity,
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -136,9 +170,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 ),
                 Center(
                   child: Transform.scale(
-                    scale: _logoScale.value,
+                    scale: logoScale,
                     child: Opacity(
-                      opacity: _logoOpacity.value,
+                      opacity: logoOpacity,
                       child: Image.asset(
                         'assets/icon/app_icon.png',
                         width: 122,
@@ -152,9 +186,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 Align(
                   alignment: const Alignment(0, 0.28),
                   child: Transform.translate(
-                    offset: Offset(0, _wordOffset.value),
+                    offset: Offset(0, wordOffset),
                     child: Opacity(
-                      opacity: _wordOpacity.value,
+                      opacity: wordOpacity,
                       child: Text(
                         'Eden',
                         style: Nocturne.displayLg.copyWith(
@@ -171,5 +205,14 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         },
       ),
     );
+  }
+
+  bool _statusFlag(dynamic value) {
+    if (value == true || value == 1) return true;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' || normalized == '1';
+    }
+    return false;
   }
 }

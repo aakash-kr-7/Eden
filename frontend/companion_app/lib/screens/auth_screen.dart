@@ -87,7 +87,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     try {
       await ref.read(authServiceProvider).signInWithGoogle();
       if (mounted) {
-        context.go(AppRoute.boot);
+        context.go(AppRoute.splashRoute(animate: false));
       }
     } catch (_) {
       if (!mounted) return;
@@ -118,7 +118,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           .read(authServiceProvider)
           .signInWithEmailPassword(email, password);
       if (mounted) {
-        context.go(AppRoute.boot);
+        context.go(AppRoute.splashRoute(animate: false));
       }
     } on AuthException catch (e) {
       if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
@@ -127,7 +127,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               .read(authServiceProvider)
               .signUpWithEmailPassword(email, password);
           if (mounted) {
-            context.go(AppRoute.boot);
+            context.go(AppRoute.splashRoute(animate: false));
           }
         } on AuthException catch (signUpError) {
           if (!mounted) return;
@@ -185,51 +185,74 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
                 offset: Offset(0, _lift.value),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(
-                    Nocturne.space8,
-                    Nocturne.space8,
-                    Nocturne.space8,
+                    Nocturne.space7,
+                    Nocturne.space7,
+                    Nocturne.space7,
                     Nocturne.space8,
                   ),
                   child: Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 420),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      constraints: const BoxConstraints(maxWidth: 460),
+                      child: Stack(
                         children: [
-                          const Spacer(),
-                          _buildHero(),
-                          const SizedBox(height: Nocturne.space9),
-                          AnimatedSwitcher(
-                            duration: Nocturne.durationStandard,
-                            switchInCurve: Curves.easeOut,
-                            switchOutCurve: Curves.easeIn,
-                            transitionBuilder: (child, animation) {
-                              return FadeTransition(
-                                opacity: animation,
-                                child: SlideTransition(
-                                  position: Tween<Offset>(
-                                    begin: const Offset(0, 0.03),
-                                    end: Offset.zero,
-                                  ).animate(animation),
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: _showEmailForm
-                                ? _buildEmailForm()
-                                : _buildAuthChoices(),
+                          const Positioned.fill(
+                            child: _AuthBackdrop(),
                           ),
-                          if (_errorMessage != null &&
-                              !_errorIsWrongPassword) ...[
-                            const SizedBox(height: Nocturne.space5),
-                            Text(
-                              _errorMessage!,
-                              style: Nocturne.bodySm.copyWith(
-                                color: Nocturne.textSecondary,
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Spacer(),
+                              _buildHero(),
+                              const SizedBox(height: Nocturne.space9),
+                              _AuthPanel(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      _showEmailForm
+                                          ? 'Keep it intimate.'
+                                          : 'A private world, already waiting.',
+                                      style: Nocturne.bodyLg.copyWith(
+                                        color: Nocturne.textSecondary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: Nocturne.space7),
+                                    AnimatedSwitcher(
+                                      duration: Nocturne.durationStandard,
+                                      switchInCurve: Curves.easeOut,
+                                      switchOutCurve: Curves.easeIn,
+                                      transitionBuilder: (child, animation) {
+                                        return FadeTransition(
+                                          opacity: animation,
+                                          child: SlideTransition(
+                                            position: Tween<Offset>(
+                                              begin: const Offset(0, 0.03),
+                                              end: Offset.zero,
+                                            ).animate(animation),
+                                            child: child,
+                                          ),
+                                        );
+                                      },
+                                      child: _showEmailForm
+                                          ? _buildEmailForm()
+                                          : _buildAuthChoices(),
+                                    ),
+                                    if (_errorMessage != null &&
+                                        !_errorIsWrongPassword) ...[
+                                      const SizedBox(height: Nocturne.space5),
+                                      Text(
+                                        _errorMessage!,
+                                        style: Nocturne.bodySm.copyWith(
+                                          color: Nocturne.destructive,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
-                          const Spacer(),
+                              const Spacer(),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -248,35 +271,44 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 80,
-          height: 80,
+          width: 88,
+          height: 88,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: Nocturne.borderSubtle),
+            border: Border.all(color: Nocturne.borderStrong),
+            boxShadow: [
+              BoxShadow(
+                color: Nocturne.accentRose.withValues(alpha: 0.14),
+                blurRadius: 48,
+                spreadRadius: 4,
+              ),
+            ],
             gradient: RadialGradient(
               colors: [
-                Nocturne.accentWarm.withValues(alpha: 0.18),
-                Colors.transparent,
+                Colors.white.withValues(alpha: 0.10),
+                const Color(0xFF090B10),
               ],
+              stops: const [0.0, 1.0],
             ),
           ),
           child: Padding(
             padding: const EdgeInsets.all(Nocturne.space5),
-            child: Image.asset(
-              'assets/images/eden_logo.png',
-              fit: BoxFit.contain,
-            ),
+            child:
+                Image.asset('assets/images/eden_logo.png', fit: BoxFit.contain),
           ),
         ),
         const SizedBox(height: Nocturne.space8),
         Text(
           'Eden',
-          style: Nocturne.displayXl.copyWith(fontSize: 56),
+          style: Nocturne.displayXl.copyWith(fontSize: 62),
         ),
         const SizedBox(height: Nocturne.space3),
         Text(
-          'Begin quietly.',
-          style: Nocturne.bodyLg.copyWith(color: Nocturne.textSecondary),
+          'Presence, memory, and conversation.\nHeld in one quiet place.',
+          style: Nocturne.bodyXl.copyWith(
+            color: Nocturne.textSecondary,
+            height: 1.5,
+          ),
         ),
       ],
     );
@@ -287,20 +319,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
       key: const ValueKey('auth_choices'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _PrimaryAuthButton(
-          label: 'Continue with Google',
+        _GoogleAuthButton(
           isLoading: _isLoading,
           onTap: _handleGoogleSignIn,
-          leading: Image.asset(
-            'assets/images/google_logo.png',
-            width: 18,
-            height: 18,
-            errorBuilder: (_, __, ___) => const Icon(
-              Icons.g_mobiledata_rounded,
-              size: 22,
-              color: Nocturne.black,
-            ),
-          ),
         ),
         const SizedBox(height: Nocturne.space4),
         _SecondaryAuthButton(
@@ -324,9 +345,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
         key: const ValueKey('email_form'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Use email',
-            style: Nocturne.displayMd,
+            style: Nocturne.displayMd.copyWith(fontSize: 30),
           ),
           const SizedBox(height: Nocturne.space2),
           Text(
@@ -442,13 +463,11 @@ class _PrimaryAuthButton extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.isLoading = false,
-    this.leading,
   });
 
   final String label;
   final VoidCallback? onTap;
   final bool isLoading;
-  final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
@@ -462,9 +481,23 @@ class _PrimaryAuthButton extends StatelessWidget {
           vertical: Nocturne.space5,
         ),
         decoration: BoxDecoration(
-          color: Nocturne.textPrimary,
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF775CFF),
+              Color(0xFF8CA7FF),
+              Color(0xFFD7B07A),
+            ],
+          ),
           borderRadius: BorderRadius.circular(Nocturne.radiusLg),
-          boxShadow: Nocturne.elevationLow,
+          boxShadow: [
+            BoxShadow(
+              color: Nocturne.accentCool.withValues(alpha: 0.18),
+              blurRadius: 30,
+              offset: const Offset(0, 14),
+            ),
+          ],
         ),
         child: Center(
           child: isLoading
@@ -473,19 +506,17 @@ class _PrimaryAuthButton extends StatelessWidget {
                   height: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(Nocturne.black),
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(Nocturne.textPrimary),
                   ),
                 )
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (leading != null) ...[
-                      leading!,
-                      const SizedBox(width: Nocturne.space3),
-                    ],
                     Text(
                       label,
-                      style: Nocturne.button.copyWith(color: Nocturne.black),
+                      style:
+                          Nocturne.button.copyWith(color: Nocturne.textPrimary),
                     ),
                   ],
                 ),
@@ -516,9 +547,9 @@ class _SecondaryAuthButton extends StatelessWidget {
           vertical: Nocturne.space5,
         ),
         decoration: BoxDecoration(
-          color: const Color(0xFF0C0D10),
+          color: const Color(0xFF0C0D11),
           borderRadius: BorderRadius.circular(Nocturne.radiusLg),
-          border: Border.all(color: Nocturne.borderSubtle),
+          border: Border.all(color: Nocturne.borderStrong),
         ),
         child: Center(
           child: Text(
@@ -540,11 +571,176 @@ class _AuthField extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFF0C0D10),
+        color: const Color(0xFF0A0C10),
         borderRadius: BorderRadius.circular(Nocturne.radiusLg),
-        border: Border.all(color: Nocturne.borderSubtle),
+        border: Border.all(color: Nocturne.borderStrong),
       ),
       child: child,
+    );
+  }
+}
+
+class _AuthBackdrop extends StatelessWidget {
+  const _AuthBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Stack(
+        children: [
+          Positioned(
+            top: -120,
+            left: -80,
+            child: _GlowOrb(
+              size: 280,
+              color: Nocturne.accentRose.withValues(alpha: 0.22),
+            ),
+          ),
+          Positioned(
+            top: 30,
+            right: -90,
+            child: _GlowOrb(
+              size: 320,
+              color: Nocturne.accentCool.withValues(alpha: 0.20),
+            ),
+          ),
+          Positioned(
+            bottom: 110,
+            left: 40,
+            child: _GlowOrb(
+              size: 220,
+              color: Nocturne.accentWarm.withValues(alpha: 0.14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GlowOrb extends StatelessWidget {
+  const _GlowOrb({
+    required this.size,
+    required this.color,
+  });
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [
+            color,
+            Colors.transparent,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AuthPanel extends StatelessWidget {
+  const _AuthPanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0x9E0B0D11),
+        borderRadius: BorderRadius.circular(Nocturne.radiusXl),
+        border: Border.all(color: Nocturne.borderStrong),
+        boxShadow: Nocturne.elevationHigh,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(Nocturne.space7),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _GoogleAuthButton extends StatelessWidget {
+  const _GoogleAuthButton({
+    required this.isLoading,
+    required this.onTap,
+  });
+
+  final bool isLoading;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: isLoading ? null : onTap,
+      borderRadius: BorderRadius.circular(Nocturne.radiusLg),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(
+          horizontal: Nocturne.space6,
+          vertical: Nocturne.space5,
+        ),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE7E8EC),
+          borderRadius: BorderRadius.circular(Nocturne.radiusLg),
+          border: Border.all(color: const Color(0xFFC9CBD2)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 20,
+              offset: const Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Center(
+          child: isLoading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Nocturne.black),
+                  ),
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.all(4),
+                      child: Image.asset(
+                        'assets/images/google_logo.png',
+                        width: 20,
+                        height: 20,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const Icon(
+                          Icons.g_mobiledata_rounded,
+                          size: 20,
+                          color: Nocturne.black,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: Nocturne.space3),
+                    Text(
+                      'Continue with Google',
+                      style: Nocturne.button.copyWith(color: Nocturne.black),
+                    ),
+                  ],
+                ),
+        ),
+      ),
     );
   }
 }

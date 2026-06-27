@@ -4,8 +4,6 @@
 // NEVER: Contain feature state, routing logic, or backend behavior.
 import 'package:flutter/material.dart';
 
-import '../components/glass.dart';
-
 class Nocturne {
   Nocturne._();
 
@@ -20,7 +18,7 @@ class Nocturne {
 
   static const Color accentCool = Color(0xFF98A7FF);
   static const Color accentWarm = Color(0xFFD8C2A3);
-  static const Color accentRose = Color(0xFFB78A8D);
+  static const Color accentRose = Color(0xFF7C78FF);
 
   static const Color textPrimary = Color(0xFFF5F7FA);
   static const Color textSecondary = Color(0xFF99A1AE);
@@ -92,27 +90,6 @@ class Nocturne {
       offset: const Offset(0, 18),
     ),
   ];
-
-  static const LiquidGlassSettings surfaceCard = LiquidGlassSettings(
-    blur: 8,
-    glassColor: Color(0xCC111317),
-    lightIntensity: 0.45,
-  );
-
-  static const LiquidGlassSettings surfaceProminent = LiquidGlassSettings(
-    blur: 10,
-    glassColor: Color(0xDD171A1F),
-    lightIntensity: 0.6,
-  );
-
-  static const LiquidGlassSettings surfaceInteractive = LiquidGlassSettings(
-    blur: 6,
-    glassColor: Color(0xF014171C),
-    lightIntensity: 0.7,
-  );
-
-  static const LiquidRoundedSuperellipse panelShape =
-      LiquidRoundedSuperellipse(borderRadius: radiusXl);
 
   static const TextStyle displayXl = TextStyle(
     fontFamily: fontDisplay,

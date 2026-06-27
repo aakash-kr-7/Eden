@@ -11,10 +11,7 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../main.dart';
-import '../theme/eden_colors.dart';
-import '../theme/glass_theme.dart';
 import '../theme/nocturne.dart';
-import '../components/glass.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -207,7 +204,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (confirm == true && mounted) {
       await ref.read(authServiceProvider).signOut();
       if (!mounted) return;
-      context.go(AppRoute.boot);
+      context.go(AppRoute.auth);
     }
   }
 
@@ -220,7 +217,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await apiService.deleteAccount();
       await ref.read(authServiceProvider).signOut();
       if (mounted) {
-        context.go(AppRoute.boot);
+        context.go(AppRoute.auth);
       }
     } catch (e) {
       if (mounted) {
@@ -275,9 +272,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ).animate(
                 CurvedAnimation(parent: anim1, curve: Curves.easeOut),
               ),
-              child: LiquidGlass.withOwnLayer(
-                shape: GlassTheme.shape,
-                settings: GlassTheme.prominent,
+              child: _SettingsSurface(
+                emphasized: true,
                 child: Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
@@ -305,7 +301,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           Expanded(
                             child: _GlassButton(
                               label: confirmLabel,
-                              glowColor: EdenColors.orangeGlow,
+                              glowColor: Nocturne.destructive,
                               onTap: () => Navigator.of(context).pop(true),
                             ),
                           ),
@@ -334,13 +330,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(
+      return Scaffold(
         backgroundColor: Colors.transparent,
         body: Center(
-          child: FakeGlass(
-            shape: LiquidOval(),
-            settings: GlassTheme.button,
-            child: Padding(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xFF111317),
+              shape: BoxShape.circle,
+              border: Border.all(color: Nocturne.borderStrong),
+              boxShadow: Nocturne.elevationMedium,
+            ),
+            child: const Padding(
               padding: EdgeInsets.all(18.0),
               child: CircularProgressIndicator(
                 strokeWidth: 1.5,
@@ -356,9 +356,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return Scaffold(
         backgroundColor: Colors.transparent,
         body: Center(
-          child: LiquidGlass.withOwnLayer(
-            shape: GlassTheme.shape,
-            settings: GlassTheme.card,
+          child: _SettingsSurface(
             child: Padding(
               padding: const EdgeInsets.all(24.0),
               child: Column(
@@ -369,7 +367,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   const SizedBox(height: 16),
                   _GlassButton(
                     label: 'retry',
-                    glowColor: EdenColors.amberGlow,
+                    glowColor: Nocturne.accentWarm,
                     onTap: _fetchProfileData,
                   ),
                 ],
@@ -511,7 +509,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 const SizedBox(height: Nocturne.space7),
                 _GlassButton(
                   label: 'Sign out',
-                  glowColor: EdenColors.amberGlow,
+                  glowColor: Nocturne.accentWarm,
                   onTap: _handleSignOut,
                 ),
               ],
@@ -546,11 +544,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       {'label': 'Quick', 'value': 'frequent'},
     ];
 
-    return FakeGlass(
-      shape: const LiquidRoundedSuperellipse(borderRadius: 16),
-      settings: const LiquidGlassSettings(
-        blur: 6,
-        glassColor: Color(0x18FFFFFF),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B0D11),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Nocturne.borderSubtle),
       ),
       child: Padding(
         padding: const EdgeInsets.all(4),
@@ -623,16 +621,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         child: Row(
           children: [
             Expanded(
-              child: FakeGlass(
-                shape: const LiquidRoundedSuperellipse(borderRadius: 16),
-                settings: const LiquidGlassSettings(
-                  blur: 6,
-                  glassColor: Color(0x18FFFFFF),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0B0D11),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Nocturne.borderSubtle),
                 ),
                 child: TextField(
                   controller: _nameController,
                   style: _bodyStyle(14),
-                  cursorColor: EdenColors.electricBlue,
+                  cursorColor: Nocturne.accentCool,
                   autofocus: true,
                   decoration: const InputDecoration(
                     border: InputBorder.none,
@@ -706,16 +704,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Text('Type "delete" below to confirm:',
                     style: _bodyStyle(12, color: Colors.white70)),
                 const SizedBox(height: 8),
-                FakeGlass(
-                  shape: const LiquidRoundedSuperellipse(borderRadius: 16),
-                  settings: const LiquidGlassSettings(
-                    blur: 6,
-                    glassColor: Color(0x18FFFFFF),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0B0D11),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Nocturne.borderSubtle),
                   ),
                   child: TextField(
                     controller: _deleteConfirmController,
                     style: _bodyStyle(14),
-                    cursorColor: EdenColors.orangeGlow,
+                    cursorColor: Nocturne.destructive,
                     decoration: InputDecoration(
                       hintText: 'delete',
                       hintStyle: _bodyStyle(14, color: Colors.white38),
@@ -732,7 +730,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ignoring: !_isDeleteActive,
                     child: _GlassButton(
                       label: 'Erase All Data',
-                      glowColor: EdenColors.orangeGlow,
+                      glowColor: Nocturne.destructive,
                       onTap: _handleDeleteAccount,
                     ),
                   ),
@@ -805,11 +803,7 @@ class _GlassSettingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LiquidGlass.withOwnLayer(
-      shape: GlassTheme.shape,
-      settings: GlassTheme.card,
-      child: child,
-    );
+    return _SettingsSurface(child: child);
   }
 }
 
@@ -824,11 +818,11 @@ class _GlassSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FakeGlass(
-      shape: const LiquidRoundedSuperellipse(borderRadius: 18),
-      settings: const LiquidGlassSettings(
-        blur: 6,
-        glassColor: Color(0x20FFFFFF),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B0D11),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Nocturne.borderSubtle),
       ),
       child: GestureDetector(
         onTap: () => onChanged(!value),
@@ -844,12 +838,11 @@ class _GlassSwitch extends StatelessWidget {
               height: 24,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: value ? EdenColors.electricBlue : Colors.white60,
+                color: value ? Nocturne.accentCool : Colors.white60,
                 boxShadow: value
                     ? [
                         BoxShadow(
-                          color:
-                              EdenColors.electricBlue.withValues(alpha: 0.45),
+                          color: Nocturne.accentCool.withValues(alpha: 0.45),
                           blurRadius: 10,
                         ),
                       ]
@@ -876,26 +869,58 @@ class _GlassButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GlassGlow(
-      glowColor: glowColor,
-      glowRadius: 0.8,
-      child: FakeGlass(
-        shape: const LiquidRoundedSuperellipse(borderRadius: 20),
-        settings: GlassTheme.button,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(20),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            child: Center(
-              child: Text(
-                label,
-                style: _bodyStyle(15).copyWith(fontWeight: FontWeight.w700),
-              ),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF111317),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Nocturne.borderStrong),
+        boxShadow: [
+          BoxShadow(
+            color: glowColor.withValues(alpha: 0.14),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          child: Center(
+            child: Text(
+              label,
+              style: _bodyStyle(15).copyWith(fontWeight: FontWeight.w700),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SettingsSurface extends StatelessWidget {
+  const _SettingsSurface({
+    required this.child,
+    this.emphasized = false,
+  });
+
+  final Widget child;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: emphasized ? const Color(0xFF111317) : const Color(0xFF0D0F13),
+        borderRadius: BorderRadius.circular(Nocturne.radiusXl),
+        border: Border.all(
+          color: emphasized ? Nocturne.borderStrong : Nocturne.borderSubtle,
+        ),
+        boxShadow:
+            emphasized ? Nocturne.elevationHigh : Nocturne.elevationMedium,
+      ),
+      child: child,
     );
   }
 }

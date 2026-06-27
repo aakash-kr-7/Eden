@@ -59,6 +59,10 @@ class AppRoute {
   static const String chat = '/chat';
   static const String profile = '/chat/profile';
   static const String memory = '/chat/memory';
+
+  static String splashRoute({bool animate = true}) {
+    return animate ? splash : '$splash?animate=false';
+  }
 }
 
 // --- GoRouter Refresh Stream Listenable Helper ---
@@ -99,7 +103,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         }
       } else {
         if (isAuth) {
-          return AppRoute.boot;
+          return AppRoute.splashRoute(animate: false);
         }
       }
       return null;
@@ -111,7 +115,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: AppRoute.splash,
-        builder: (context, state) => const SplashScreen(),
+        builder: (context, state) => SplashScreen(
+          animate: state.uri.queryParameters['animate'] != 'false',
+        ),
       ),
       GoRoute(
         path: AppRoute.auth,

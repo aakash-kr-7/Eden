@@ -48,6 +48,7 @@ flutter:
   assets:
     - assets/fonts/
     - assets/images/eden_logo.png
+    - assets/images/google_logo.png
     - assets/icon/app_icon.png
     - assets/bootup_animation.mp4
     - assets/images/black_square.png

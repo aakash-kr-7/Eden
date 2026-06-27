@@ -34,6 +34,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
   String _displayedMessage = '';
   bool _messageTypewriterFinished = false;
   Timer? _typewriterTimer;
+  bool _fallbackRouted = false;
 
   @override
   void initState() {
@@ -174,6 +175,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(onboardingProvider);
+
+    if (state.isComplete && state.firstMessage == null && !_fallbackRouted) {
+      _fallbackRouted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          context.go(AppRoute.chat);
+        }
+      });
+    }
 
     return PopScope(
       canPop: false,

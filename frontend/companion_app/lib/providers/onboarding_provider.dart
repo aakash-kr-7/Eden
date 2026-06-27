@@ -69,10 +69,14 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
       final apiService = _ref.read(apiServiceProvider);
 
       final status = await apiService.onboardingStatus();
-      final isComplete = status['complete'] as bool? ?? false;
+      final isComplete = _statusFlag(status['complete']);
 
       if (isComplete) {
-        await complete();
+        state = state.copyWith(
+          isLoading: false,
+          isComplete: true,
+          question: null,
+        );
       } else {
         final question = await apiService.onboardingStart();
         state = state.copyWith(
@@ -135,6 +139,15 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
       state = state.copyWith(isLoading: false, errorMessage: e.toString());
       rethrow;
     }
+  }
+
+  bool _statusFlag(dynamic value) {
+    if (value == true || value == 1) return true;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' || normalized == '1';
+    }
+    return false;
   }
 }
 
