@@ -1,7 +1,7 @@
 // FILE: screens/memory_vault_screen.dart
-// PURPOSE: Displays saved memories while preserving provider-driven memory operations.
-// RESPONSIBILITIES: Render memory browsing UI and delegate actions to memory state.
-// NEVER: Contain backend rule changes or app-wide route setup.
+// PURPOSE: Present the memory vault as a calm archive while preserving existing memory provider behavior.
+// RESPONSIBILITIES: Render memory browsing, filtering, pinning, deletion, and detail presentation.
+// NEVER: Change backend memory contracts, provider interfaces, or app-wide routing rules.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,9 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../main.dart';
 import '../models/models.dart';
 import '../providers/memory_provider.dart';
-import '../theme/eden_colors.dart';
-import '../theme/glass_theme.dart';
-import '../components/glass.dart';
+import '../theme/nocturne.dart';
 
 class MemoryVaultScreen extends ConsumerStatefulWidget {
   const MemoryVaultScreen({super.key});
@@ -28,7 +26,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
   int _totalMemoryCount = 0;
   String _selectedCategory = 'All';
 
-  final List<String> _categories = [
+  final List<String> _categories = const [
     'All',
     'Feelings',
     'Facts',
@@ -80,6 +78,8 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
   }
 
   void _onScroll() {
+    if (!_scrollController.hasClients) return;
+
     final maxScroll = _scrollController.position.maxScrollExtent;
     final currentScroll = _scrollController.position.pixels;
     if (maxScroll > 0 && currentScroll / maxScroll >= 0.8) {
@@ -97,7 +97,7 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
 
     String? type;
     if (category != 'All') {
-      final map = {
+      const map = {
         'Feelings': 'feeling',
         'Facts': 'fact',
         'Events': 'event',
@@ -129,53 +129,70 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
       context: context,
       barrierDismissible: true,
       barrierLabel: 'confirm_delete',
-      barrierColor: Colors.black.withValues(alpha: 0.75),
-      transitionDuration: const Duration(milliseconds: 250),
-      pageBuilder: (context, anim1, anim2) {
+      barrierColor: Colors.black.withValues(alpha: 0.82),
+      transitionDuration: Nocturne.durationStandard,
+      pageBuilder: (context, animation, secondaryAnimation) {
         return Center(
-          child: ScaleTransition(
-            scale: CurvedAnimation(parent: anim1, curve: Curves.easeOutBack),
-            child: LiquidGlass.withOwnLayer(
-              shape: GlassTheme.shape,
-              settings: GlassTheme.prominent,
-              child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Forget this memory?',
-                      style: _displayStyle(26),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'This moment will disappear from their presence and context forever.',
-                      style: _bodyStyle(14, color: Colors.white70),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 28),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextButton(
-                            onPressed: () => Navigator.of(context).pop(false),
-                            child: Text('Keep',
-                                style: _bodyStyle(15, color: Colors.white70)),
-                          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: Nocturne.space8),
+            child: FadeTransition(
+              opacity: CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOutCubic,
+              ),
+              child: ScaleTransition(
+                scale: Tween<double>(
+                  begin: 0.96,
+                  end: 1,
+                ).animate(
+                  CurvedAnimation(
+                      parent: animation, curve: Curves.easeOutCubic),
+                ),
+                child: Container(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  padding: const EdgeInsets.all(Nocturne.space8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0C0D0F),
+                    borderRadius: BorderRadius.circular(Nocturne.radiusXl),
+                    border: Border.all(color: Nocturne.borderStrong),
+                    boxShadow: Nocturne.elevationHigh,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Forget this memory?',
+                        style: Nocturne.displayMd,
+                      ),
+                      const SizedBox(height: Nocturne.space4),
+                      Text(
+                        'This moment will disappear from their archive and living context.',
+                        style: Nocturne.bodyLg.copyWith(
+                          color: Nocturne.textSecondary,
                         ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: _GlassActionButton(
-                            label: 'Forget',
-                            glowColor: EdenColors.orangeGlow,
-                            onTap: () => Navigator.of(context).pop(true),
+                      ),
+                      const SizedBox(height: Nocturne.space8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _DialogButton(
+                              label: 'Keep',
+                              onTap: () => Navigator.of(context).pop(false),
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                          const SizedBox(width: Nocturne.space4),
+                          Expanded(
+                            child: _DialogButton(
+                              label: 'Forget',
+                              destructive: true,
+                              onTap: () => Navigator.of(context).pop(true),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -188,156 +205,178 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
   @override
   Widget build(BuildContext context) {
     final memories = ref.watch(memoriesProvider);
+    final notifier = ref.read(memoriesProvider.notifier);
+    final pinned = memories.where((memory) => memory.isPinned).toList();
+    final archive = memories.where((memory) => !memory.isPinned).toList();
     final partnerDisplay = _partnerName ?? 'Companion';
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Stack(
           children: [
-            Padding(
-              padding: const EdgeInsets.only(left: 24, right: 24, top: 32),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'What $partnerDisplay remembers',
-                          style: _displayStyle(36),
+            const _VaultBackdrop(),
+            CustomScrollView(
+              controller: _scrollController,
+              physics: const BouncingScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: _VaultHeader(
+                    partnerName: partnerDisplay,
+                    totalMemoryCount: _totalMemoryCount,
+                    onClose: () => Navigator.of(context).pop(),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: _CategoryStrip(
+                    categories: _categories,
+                    selectedCategory: _selectedCategory,
+                    onSelected: _onCategorySelected,
+                  ),
+                ),
+                if (_isInitialLoading)
+                  const SliverToBoxAdapter(
+                    child: _LoadingSection(),
+                  )
+                else if (memories.isEmpty)
+                  const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _EmptyVaultState(),
+                  )
+                else ...[
+                  if (pinned.isNotEmpty) ...[
+                    const SliverToBoxAdapter(
+                      child: _SectionHeading(
+                        title: 'Pinned',
+                        subtitle: 'The moments held closest.',
+                      ),
+                    ),
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(
+                        Nocturne.space8,
+                        0,
+                        Nocturne.space8,
+                        Nocturne.space8,
+                      ),
+                      sliver: SliverList.builder(
+                        itemCount: pinned.length,
+                        itemBuilder: (context, index) {
+                          final memory = pinned[index];
+                          return Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: Nocturne.space5),
+                            child: _DismissibleMemoryCard(
+                              memory: memory,
+                              prominent: true,
+                              onOpen: () => _openMemoryDetail(memory),
+                              onTogglePin: () => _togglePin(memory),
+                              onConfirmDelete: () async {
+                                final confirm =
+                                    await _showDeleteConfirmation(context);
+                                if (confirm == true) {
+                                  await ref
+                                      .read(memoriesProvider.notifier)
+                                      .delete(memory.id);
+                                  if (mounted) {
+                                    setState(() {
+                                      _totalMemoryCount = _totalMemoryCount > 0
+                                          ? _totalMemoryCount - 1
+                                          : 0;
+                                    });
+                                  }
+                                  return true;
+                                }
+                                return false;
+                              },
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  if (archive.isNotEmpty) ...[
+                    const SliverToBoxAdapter(
+                      child: _SectionHeading(
+                        title: 'Archive',
+                        subtitle: 'Quieter traces, still kept.',
+                      ),
+                    ),
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(
+                        Nocturne.space8,
+                        0,
+                        Nocturne.space8,
+                        Nocturne.space9,
+                      ),
+                      sliver: SliverGrid(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final memory = archive[index];
+                            return _DismissibleMemoryCard(
+                              memory: memory,
+                              prominent: false,
+                              onOpen: () => _openMemoryDetail(memory),
+                              onTogglePin: () => _togglePin(memory),
+                              onConfirmDelete: () async {
+                                final confirm =
+                                    await _showDeleteConfirmation(context);
+                                if (confirm == true) {
+                                  await ref
+                                      .read(memoriesProvider.notifier)
+                                      .delete(memory.id);
+                                  if (mounted) {
+                                    setState(() {
+                                      _totalMemoryCount = _totalMemoryCount > 0
+                                          ? _totalMemoryCount - 1
+                                          : 0;
+                                    });
+                                  }
+                                  return true;
+                                }
+                                return false;
+                              },
+                            );
+                          },
+                          childCount: archive.length,
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '$_totalMemoryCount memories total',
-                          style: _bodyStyle(12, color: Colors.white60),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: Nocturne.space5,
+                          crossAxisSpacing: Nocturne.space5,
+                          childAspectRatio: 0.83,
                         ),
-                      ],
+                      ),
+                    ),
+                  ],
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(
+                        left: Nocturne.space8,
+                        right: Nocturne.space8,
+                        bottom: Nocturne.space8,
+                      ),
+                      child: AnimatedOpacity(
+                        opacity: notifier.isLoadingMore ? 1 : 0,
+                        duration: Nocturne.durationFast,
+                        child: const Center(
+                          child: Padding(
+                            padding: EdgeInsets.only(top: Nocturne.space4),
+                            child: SizedBox(
+                              width: 22,
+                              height: 22,
+                              child:
+                                  CircularProgressIndicator(strokeWidth: 1.5),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon:
-                        const Icon(Icons.close_rounded, color: Colors.white70),
-                  ),
                 ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 14),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                physics: const BouncingScrollPhysics(),
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: _categories.map((cat) {
-                    final isSelected = _selectedCategory == cat;
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                      child: _GlassCategoryPill(
-                        text: cat,
-                        selected: isSelected,
-                        onTap: () => _onCategorySelected(cat),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: _isInitialLoading
-                  ? _buildLoadingState()
-                  : memories.isEmpty
-                      ? _buildEmptyState()
-                      : _buildMemoryGrid(memories),
+              ],
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMemoryGrid(List<Memory> memories) {
-    return GridView.builder(
-      controller: _scrollController,
-      physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: memories.length,
-      itemBuilder: (context, index) {
-        final memory = memories[index];
-        return Dismissible(
-          key: Key(memory.id.toString()),
-          direction: DismissDirection.endToStart,
-          background: Container(
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 24),
-            decoration: BoxDecoration(
-              color: EdenColors.orangeGlow.withValues(alpha: 0.7),
-              borderRadius: BorderRadius.circular(30),
-            ),
-            child: const Icon(Icons.delete_outline_rounded,
-                color: Colors.white, size: 24),
-          ),
-          confirmDismiss: (direction) async {
-            final confirm = await _showDeleteConfirmation(context);
-            if (confirm == true) {
-              ref.read(memoriesProvider.notifier).delete(memory.id);
-              setState(() {
-                _totalMemoryCount =
-                    _totalMemoryCount > 0 ? _totalMemoryCount - 1 : 0;
-              });
-              return true;
-            }
-            return false;
-          },
-          child: _MemoryGlassCard(
-            memory: memory,
-            onTap: () => _openMemoryDetail(memory),
-            onLongPress: () => _togglePin(memory),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildLoadingState() {
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: 6,
-      itemBuilder: (context, index) {
-        return LiquidGlass.withOwnLayer(
-          shape: GlassTheme.shape,
-          settings: GlassTheme.card,
-          child: const SizedBox.expand(),
-        );
-      },
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: LiquidGlass.withOwnLayer(
-        shape: GlassTheme.shape,
-        settings: GlassTheme.card,
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Text('Nothing here yet.',
-              style: _bodyStyle(14, color: Colors.white70)),
         ),
       ),
     );
@@ -355,28 +394,342 @@ class _MemoryVaultScreenState extends ConsumerState<MemoryVaultScreen> {
   }
 }
 
-class _MemoryGlassCard extends StatelessWidget {
-  const _MemoryGlassCard({
-    required this.memory,
-    required this.onTap,
-    required this.onLongPress,
-  });
-
-  final Memory memory;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
+class _VaultBackdrop extends StatelessWidget {
+  const _VaultBackdrop();
 
   @override
   Widget build(BuildContext context) {
-    return LiquidGlass.withOwnLayer(
-      shape: GlassTheme.shape,
-      settings: GlassTheme.card,
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          const ColoredBox(color: Colors.black),
+          Positioned(
+            top: -120,
+            right: -60,
+            child: IgnorePointer(
+              child: Container(
+                width: 260,
+                height: 260,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      Nocturne.accentWarm.withValues(alpha: 0.08),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: -80,
+            top: 260,
+            child: IgnorePointer(
+              child: Container(
+                width: 220,
+                height: 220,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      Nocturne.accentCool.withValues(alpha: 0.05),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VaultHeader extends StatelessWidget {
+  const _VaultHeader({
+    required this.partnerName,
+    required this.totalMemoryCount,
+    required this.onClose,
+  });
+
+  final String partnerName;
+  final int totalMemoryCount;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Nocturne.space8,
+        Nocturne.space8,
+        Nocturne.space8,
+        Nocturne.space7,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Memory Vault',
+                      style: Nocturne.displayLg.copyWith(fontSize: 40),
+                    ),
+                    const SizedBox(height: Nocturne.space3),
+                    Text(
+                      '$partnerName kept in quiet detail',
+                      style: Nocturne.bodySm.copyWith(
+                        color: Nocturne.textTertiary,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: onClose,
+                splashRadius: 18,
+                icon: const Icon(
+                  Icons.close_rounded,
+                  color: Nocturne.textSecondary,
+                  size: Nocturne.iconXl,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: Nocturne.space8),
+          Wrap(
+            spacing: Nocturne.space6,
+            runSpacing: Nocturne.space4,
+            children: [
+              _VaultMetric(
+                label: 'Total',
+                value: '$totalMemoryCount',
+              ),
+              const _VaultMetric(
+                label: 'Tone',
+                value: 'Dark archive',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VaultMetric extends StatelessWidget {
+  const _VaultMetric({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Nocturne.space5,
+        vertical: Nocturne.space4,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B0C0E),
+        borderRadius: BorderRadius.circular(Nocturne.radiusMd),
+        border: Border.all(color: Nocturne.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Nocturne.label.copyWith(color: Nocturne.textTertiary),
+          ),
+          const SizedBox(height: Nocturne.space2),
+          Text(value, style: Nocturne.bodyLg),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryStrip extends StatelessWidget {
+  const _CategoryStrip({
+    required this.categories,
+    required this.selectedCategory,
+    required this.onSelected,
+  });
+
+  final List<String> categories;
+  final String selectedCategory;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Nocturne.space8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: Nocturne.space8),
+        child: Row(
+          children: categories.map((category) {
+            final isSelected = selectedCategory == category;
+            return Padding(
+              padding: const EdgeInsets.only(right: Nocturne.space3),
+              child: InkWell(
+                onTap: () => onSelected(category),
+                borderRadius: BorderRadius.circular(Nocturne.radiusPill),
+                child: AnimatedContainer(
+                  duration: Nocturne.durationFast,
+                  curve: Curves.easeOutCubic,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Nocturne.space5,
+                    vertical: Nocturne.space3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? Nocturne.textPrimary
+                        : const Color(0xFF0A0B0D),
+                    borderRadius: BorderRadius.circular(Nocturne.radiusPill),
+                    border: Border.all(
+                      color: isSelected
+                          ? Colors.transparent
+                          : Nocturne.borderSubtle,
+                    ),
+                  ),
+                  child: Text(
+                    category,
+                    style: Nocturne.bodyMd.copyWith(
+                      color:
+                          isSelected ? Nocturne.black : Nocturne.textSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionHeading extends StatelessWidget {
+  const _SectionHeading({
+    required this.title,
+    required this.subtitle,
+  });
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Nocturne.space8,
+        0,
+        Nocturne.space8,
+        Nocturne.space5,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Nocturne.displayMd),
+          const SizedBox(height: Nocturne.space2),
+          Text(
+            subtitle,
+            style: Nocturne.bodySm.copyWith(color: Nocturne.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DismissibleMemoryCard extends StatelessWidget {
+  const _DismissibleMemoryCard({
+    required this.memory,
+    required this.prominent,
+    required this.onOpen,
+    required this.onTogglePin,
+    required this.onConfirmDelete,
+  });
+
+  final Memory memory;
+  final bool prominent;
+  final VoidCallback onOpen;
+  final VoidCallback onTogglePin;
+  final Future<bool> Function() onConfirmDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dismissible(
+      key: Key(memory.id.toString()),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: Nocturne.space6),
+        decoration: BoxDecoration(
+          color: Nocturne.destructive.withValues(alpha: 0.82),
+          borderRadius: BorderRadius.circular(Nocturne.radiusXl),
+        ),
+        child: const Icon(
+          Icons.delete_outline_rounded,
+          color: Nocturne.textPrimary,
+          size: Nocturne.iconXl,
+        ),
+      ),
+      confirmDismiss: (_) => onConfirmDelete(),
+      child: prominent
+          ? _PinnedMemoryCard(
+              memory: memory,
+              onOpen: onOpen,
+              onTogglePin: onTogglePin,
+            )
+          : _ArchiveMemoryCard(
+              memory: memory,
+              onOpen: onOpen,
+              onTogglePin: onTogglePin,
+            ),
+    );
+  }
+}
+
+class _PinnedMemoryCard extends StatelessWidget {
+  const _PinnedMemoryCard({
+    required this.memory,
+    required this.onOpen,
+    required this.onTogglePin,
+  });
+
+  final Memory memory;
+  final VoidCallback onOpen;
+  final VoidCallback onTogglePin;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E1013),
+        borderRadius: BorderRadius.circular(Nocturne.radiusXl),
+        border: Border.all(color: Nocturne.borderStrong),
+        boxShadow: Nocturne.elevationHigh,
+      ),
       child: InkWell(
-        onTap: onTap,
-        onLongPress: onLongPress,
-        borderRadius: BorderRadius.circular(30),
+        onTap: onOpen,
+        onLongPress: onTogglePin,
+        borderRadius: BorderRadius.circular(Nocturne.radiusXl),
         child: Padding(
-          padding: const EdgeInsets.all(18.0),
+          padding: const EdgeInsets.all(Nocturne.space7),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -385,31 +738,216 @@ class _MemoryGlassCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       _memoryTitle(memory),
-                      style: _bodyStyle(13, color: Colors.white70).copyWith(
-                        fontWeight: FontWeight.w700,
+                      style: Nocturne.label.copyWith(
+                        color: Nocturne.accentWarm,
+                        letterSpacing: 0.8,
                       ),
                     ),
                   ),
-                  if (memory.isPinned)
-                    const Icon(Icons.push_pin_rounded,
-                        size: 15, color: Colors.white70),
+                  const Icon(
+                    Icons.push_pin_rounded,
+                    size: Nocturne.iconMd,
+                    color: Nocturne.accentWarm,
+                  ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: Nocturne.space6),
+              Text(
+                memory.memoryText,
+                maxLines: 5,
+                overflow: TextOverflow.ellipsis,
+                style: Nocturne.bodyXl.copyWith(height: 1.55),
+              ),
+              const SizedBox(height: Nocturne.space7),
+              Row(
+                children: [
+                  Text(
+                    _formatDate(memory.createdAt),
+                    style:
+                        Nocturne.bodySm.copyWith(color: Nocturne.textTertiary),
+                  ),
+                  const Spacer(),
+                  _MemoryMetaChip(label: '${memory.recallCount} recalls'),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ArchiveMemoryCard extends StatelessWidget {
+  const _ArchiveMemoryCard({
+    required this.memory,
+    required this.onOpen,
+    required this.onTogglePin,
+  });
+
+  final Memory memory;
+  final VoidCallback onOpen;
+  final VoidCallback onTogglePin;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF090A0C),
+        borderRadius: BorderRadius.circular(Nocturne.radiusLg),
+        border: Border.all(color: Nocturne.borderSubtle),
+      ),
+      child: InkWell(
+        onTap: onOpen,
+        onLongPress: onTogglePin,
+        borderRadius: BorderRadius.circular(Nocturne.radiusLg),
+        child: Padding(
+          padding: const EdgeInsets.all(Nocturne.space5),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _memoryTitle(memory),
+                style: Nocturne.label.copyWith(color: Nocturne.textTertiary),
+              ),
+              const SizedBox(height: Nocturne.space4),
               Expanded(
                 child: Text(
                   memory.memoryText,
-                  style: _bodyStyle(15),
                   maxLines: 7,
                   overflow: TextOverflow.ellipsis,
+                  style: Nocturne.bodyMd.copyWith(
+                    color: Nocturne.textSecondary,
+                    height: 1.5,
+                  ),
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: Nocturne.space4),
               Text(
                 _formatDate(memory.createdAt),
-                style: _bodyStyle(11, color: Colors.white54),
+                style: Nocturne.bodySm.copyWith(color: Nocturne.textTertiary),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MemoryMetaChip extends StatelessWidget {
+  const _MemoryMetaChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: Nocturne.space3,
+        vertical: Nocturne.space2,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(Nocturne.radiusPill),
+        border: Border.all(color: Nocturne.borderSubtle),
+      ),
+      child: Text(
+        label,
+        style: Nocturne.bodySm.copyWith(color: Nocturne.textSecondary),
+      ),
+    );
+  }
+}
+
+class _LoadingSection extends StatelessWidget {
+  const _LoadingSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Nocturne.space8,
+        Nocturne.space7,
+        Nocturne.space8,
+        Nocturne.space8,
+      ),
+      child: Column(
+        children: List.generate(
+          3,
+          (index) => Container(
+            height: 140,
+            margin: const EdgeInsets.only(bottom: Nocturne.space5),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0B0C0E),
+              borderRadius: BorderRadius.circular(Nocturne.radiusXl),
+              border: Border.all(color: Nocturne.borderSubtle),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyVaultState extends StatelessWidget {
+  const _EmptyVaultState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(Nocturne.space9),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Nothing preserved yet.',
+            style: Nocturne.displayMd,
+          ),
+          const SizedBox(height: Nocturne.space4),
+          Text(
+            'When something matters enough to keep, it will appear here in the archive.',
+            style: Nocturne.bodyLg.copyWith(color: Nocturne.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DialogButton extends StatelessWidget {
+  const _DialogButton({
+    required this.label,
+    required this.onTap,
+    this.destructive = false,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(Nocturne.radiusLg),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: Nocturne.space5),
+        decoration: BoxDecoration(
+          color: destructive ? Nocturne.destructive : const Color(0xFF14171B),
+          borderRadius: BorderRadius.circular(Nocturne.radiusLg),
+          border: Border.all(
+            color: destructive ? Colors.transparent : Nocturne.borderSubtle,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: Nocturne.button.copyWith(
+              color:
+                  destructive ? Nocturne.textPrimary : Nocturne.textSecondary,
+            ),
           ),
         ),
       ),
@@ -431,116 +969,80 @@ class _MemoryDetailScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: LiquidGlass.withOwnLayer(
-            shape: GlassTheme.shape,
-            settings: GlassTheme.prominent,
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+        child: Stack(
+          children: [
+            const _VaultBackdrop(),
+            Padding(
+              padding: const EdgeInsets.all(Nocturne.space7),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF090A0C),
+                  borderRadius: BorderRadius.circular(Nocturne.radiusXl),
+                  border: Border.all(
+                    color: memory.isPinned
+                        ? Nocturne.borderStrong
+                        : Nocturne.borderSubtle,
+                  ),
+                  boxShadow: Nocturne.elevationHigh,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(Nocturne.space8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      IconButton(
-                        onPressed: () => Navigator.of(context).pop(),
-                        icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                            color: Colors.white),
+                      Row(
+                        children: [
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(
+                              Icons.arrow_back_ios_new_rounded,
+                              color: Nocturne.textSecondary,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: onTogglePin,
+                            tooltip: memory.isPinned ? 'Unpin' : 'Pin',
+                            icon: Icon(
+                              memory.isPinned
+                                  ? Icons.push_pin_rounded
+                                  : Icons.push_pin_outlined,
+                              color: memory.isPinned
+                                  ? Nocturne.accentWarm
+                                  : Nocturne.textSecondary,
+                            ),
+                          ),
+                        ],
                       ),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: onTogglePin,
-                        icon: Icon(
-                          memory.isPinned
-                              ? Icons.push_pin_rounded
-                              : Icons.push_pin_outlined,
-                          color: Colors.white,
+                      const SizedBox(height: Nocturne.space7),
+                      Text(
+                        _memoryTitle(memory),
+                        style: Nocturne.label.copyWith(
+                          color: memory.isPinned
+                              ? Nocturne.accentWarm
+                              : Nocturne.textSecondary,
+                          letterSpacing: 0.9,
+                        ),
+                      ),
+                      const SizedBox(height: Nocturne.space4),
+                      Text(_formatDate(memory.createdAt),
+                          style: Nocturne.bodySm),
+                      const SizedBox(height: Nocturne.space8),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          physics: const BouncingScrollPhysics(),
+                          child: Text(
+                            memory.memoryText,
+                            style: Nocturne.bodyXl.copyWith(height: 1.7),
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 24),
-                  Text(_memoryTitle(memory), style: _displayStyle(32)),
-                  const SizedBox(height: 12),
-                  Text(_formatDate(memory.createdAt),
-                      style: _bodyStyle(12, color: Colors.white60)),
-                  const SizedBox(height: 28),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: Text(memory.memoryText, style: _bodyStyle(18)),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _GlassCategoryPill extends StatelessWidget {
-  const _GlassCategoryPill({
-    required this.text,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String text;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return FakeGlass(
-      shape: const LiquidRoundedSuperellipse(borderRadius: 20),
-      settings: selected ? GlassTheme.button : GlassTheme.card,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          child: Text(
-            text,
-            style:
-                _bodyStyle(13, color: selected ? Colors.white : Colors.white70),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _GlassActionButton extends StatelessWidget {
-  const _GlassActionButton({
-    required this.label,
-    required this.glowColor,
-    required this.onTap,
-  });
-
-  final String label;
-  final Color glowColor;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GlassGlow(
-      glowColor: glowColor,
-      glowRadius: 0.8,
-      child: FakeGlass(
-        shape: const LiquidRoundedSuperellipse(borderRadius: 18),
-        settings: GlassTheme.button,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(18),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            child: Center(
-              child: Text(label, style: _bodyStyle(15)),
-            ),
-          ),
+          ],
         ),
       ),
     );
@@ -553,24 +1055,4 @@ String _memoryTitle(Memory memory) {
 
 String _formatDate(DateTime date) {
   return '${date.month}/${date.day}/${date.year}';
-}
-
-TextStyle _displayStyle(double size, {Color color = Colors.white}) {
-  return TextStyle(
-    fontFamily: 'CormorantGaramond',
-    fontWeight: FontWeight.w300,
-    fontSize: size,
-    color: color,
-    height: 1.12,
-  );
-}
-
-TextStyle _bodyStyle(double size, {Color color = Colors.white}) {
-  return TextStyle(
-    fontFamily: 'PlusJakartaSans',
-    fontWeight: FontWeight.w400,
-    fontSize: size,
-    color: color,
-    height: 1.45,
-  );
 }

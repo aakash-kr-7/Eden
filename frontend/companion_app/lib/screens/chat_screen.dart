@@ -1,7 +1,7 @@
 // FILE: screens/chat_screen.dart
-// PURPOSE: Main chat experience, preserving the current messaging and navigation flow.
-// RESPONSIBILITIES: Render chat UI and connect user interactions to existing providers.
-// NEVER: Contain backend protocol rewrites or global app bootstrap code.
+// PURPOSE: Present the flagship conversation experience while preserving existing chat integrations.
+// RESPONSIBILITIES: Render chat, stream provider-backed message state, and route profile and memory access.
+// NEVER: Change backend contracts, provider interfaces, or global app bootstrap rules.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -14,10 +14,7 @@ import '../main.dart';
 import '../models/models.dart';
 import '../providers/chat_provider_v3.dart';
 import '../providers/session_provider.dart';
-import '../theme/eden_colors.dart';
-import '../theme/glass_theme.dart';
-import '../components/glass.dart';
-import '../components/typing_indicator.dart';
+import '../theme/nocturne.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -34,12 +31,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   bool _isInitializing = true;
   bool _isSending = false;
+  bool _noConnection = false;
+  bool _showSendButton = false;
   String? _errorMessage;
   String? _lastSentText;
-  double _headerOpacity = 1.0;
-  bool _noConnection = false;
   int? _firstProactiveMessageId;
-  bool _showSendButton = false;
   Timer? _typingTimer;
   bool _lastSentTypingState = false;
 
@@ -74,21 +70,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 
   void _onScroll() {
-    if (_scrollController.hasClients) {
-      final offset = _scrollController.offset;
-      final maxScroll = _scrollController.position.maxScrollExtent;
-      final distanceFromBottom = maxScroll - offset;
-      const targetOpacity = 1.0;
+    if (!_scrollController.hasClients) return;
 
-      if (_headerOpacity != targetOpacity) {
-        setState(() {
-          _headerOpacity = targetOpacity;
-        });
-      }
+    final offset = _scrollController.offset;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final distanceFromBottom = maxScroll - offset;
 
-      if (distanceFromBottom < 20.0) {
-        _markLastMessageAsRead();
-      }
+    if (distanceFromBottom < 20.0) {
+      _markLastMessageAsRead();
     }
   }
 
@@ -115,7 +104,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     if (isTyping) {
       if (_typingTimer == null) {
         _sendTypingStatus(true);
-        _typingTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        _typingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
           _sendTypingStatus(true);
         });
       }
@@ -181,19 +170,21 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final session = await ref.refresh(sessionProvider.future);
       final conversationId = session.conversationId;
       final fetchedMessages = await apiService.getMessages(conversationId);
-      final List<Message> mergedMessages = List.from(fetchedMessages);
+      final mergedMessages = List<Message>.from(fetchedMessages);
 
       if (session.unreadProactive.isNotEmpty) {
-        for (var pm in session.unreadProactive) {
+        for (final pm in session.unreadProactive) {
           final pmId = int.tryParse(pm.id) ?? pm.id.hashCode;
-          if (!mergedMessages.any((m) => m.id == pmId)) {
-            mergedMessages.add(Message(
-              id: pmId,
-              conversationId: conversationId,
-              role: MessageRole.partner,
-              content: pm.message,
-              sentAt: pm.sentAt,
-            ));
+          if (!mergedMessages.any((message) => message.id == pmId)) {
+            mergedMessages.add(
+              Message(
+                id: pmId,
+                conversationId: conversationId,
+                role: MessageRole.partner,
+                content: pm.message,
+                sentAt: pm.sentAt,
+              ),
+            );
           }
         }
 
@@ -209,7 +200,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       ref.read(messagesProvider.notifier).setMessages(mergedMessages);
       await ref.read(localCacheServiceProvider).saveMessages(mergedMessages);
 
-      for (var pm in session.unreadProactive) {
+      for (final pm in session.unreadProactive) {
         try {
           await apiService.acknowledgeProactive(pm.id);
         } catch (e) {
@@ -243,9 +234,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final proactive = await apiService.getPendingProactive();
       if (proactive.isNotEmpty && mounted) {
         final messages = ref.read(messagesProvider);
-        for (var pm in proactive) {
+        for (final pm in proactive) {
           final pmId = int.tryParse(pm.id) ?? pm.id.hashCode;
-          if (!messages.any((m) => m.id == pmId)) {
+          if (!messages.any((message) => message.id == pmId)) {
             final pmMessage = Message(
               id: pmId,
               conversationId:
@@ -293,7 +284,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     } catch (e) {
       debugPrint('Error sending message: $e');
       setState(() {
-        _errorMessage = 'something went wrong - tap to retry';
+        _errorMessage = 'Something went wrong. Tap to try again.';
         _noConnection = true;
       });
     } finally {
@@ -313,22 +304,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   void _scrollToBottom({bool animated = true}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        final target = _scrollController.position.maxScrollExtent;
-        if (animated) {
-          _scrollController
-              .animateTo(
-            target,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          )
-              .then((_) {
-            _markLastMessageAsRead();
-          });
-        } else {
-          _scrollController.jumpTo(target);
+      if (!_scrollController.hasClients) return;
+
+      final target = _scrollController.position.maxScrollExtent;
+      if (animated) {
+        _scrollController
+            .animateTo(
+          target,
+          duration: Nocturne.durationStandard,
+          curve: Curves.easeOutCubic,
+        )
+            .then((_) {
           _markLastMessageAsRead();
-        }
+        });
+      } else {
+        _scrollController.jumpTo(target);
+        _markLastMessageAsRead();
       }
     });
   }
@@ -343,18 +334,64 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       return false;
     }
 
-    final prev = messages[messages.length - index];
-    final difference = current.sentAt.difference(prev.sentAt).abs();
+    final previous = messages[messages.length - index];
+    final difference = current.sentAt.difference(previous.sentAt).abs();
     return difference.inHours >= 4;
   }
 
-  String _formatMood(String? mood) {
-    if (mood == null || mood.trim().isEmpty) return 'present';
-    final firstMood = mood.split(',').first.trim().toLowerCase();
-    if (firstMood == 'neutral' || firstMood == 'peaceful') {
-      return 'present';
+  String _presenceLine(Partner? partner) {
+    final partnerName = partner?.name ?? 'Eden';
+    final combined =
+        '${partner?.currentMood ?? ''} ${partner?.currentEnergy ?? ''}'
+            .toLowerCase();
+
+    if (combined.contains('sleep') ||
+        combined.contains('rest') ||
+        combined.contains('tired') ||
+        combined.contains('quiet')) {
+      return '$partnerName is sleeping.';
     }
-    return '$firstMood today';
+
+    if (combined.contains('focus') ||
+        combined.contains('curious') ||
+        combined.contains('thought') ||
+        combined.contains('calm')) {
+      return '$partnerName is reading.';
+    }
+
+    if (combined.contains('bright') ||
+        combined.contains('open') ||
+        combined.contains('play') ||
+        combined.contains('warm')) {
+      return '$partnerName is outside.';
+    }
+
+    const fallbacks = ['sleeping', 'reading', 'outside'];
+    final fallback = fallbacks[partnerName.length % fallbacks.length];
+    return '$partnerName is $fallback.';
+  }
+
+  String _relationshipLine(Partner? partner) {
+    final partnerName = partner?.name ?? 'Eden';
+    final daysTogether = partner?.daysTogether ?? 0;
+    if (daysTogether > 0) {
+      return '$partnerName, day $daysTogether';
+    }
+    return 'A quiet place for the two of you';
+  }
+
+  String _typingActivityLabel({
+    required String partnerName,
+    required bool isFollowUp,
+    required int? overrideDurationMs,
+  }) {
+    if (overrideDurationMs != null && overrideDurationMs > 1400) {
+      return '$partnerName hesitates...';
+    }
+    if (isFollowUp) {
+      return '$partnerName writing...';
+    }
+    return '$partnerName thinking...';
   }
 
   @override
@@ -376,21 +413,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
         if (isKeyboardVisible) {
           _scrollToBottom(animated: true);
         }
+
         return Scaffold(
           backgroundColor: Colors.transparent,
           resizeToAvoidBottomInset: true,
           body: SafeArea(
             child: Stack(
               children: [
-                _buildMessageList(
-                  messages,
-                  listCount,
-                  showTyping,
-                  showStreaming,
-                  hasError,
-                  partner,
+                const _ChatBackdrop(),
+                Column(
+                  children: [
+                    _buildHeader(partner),
+                    Expanded(
+                      child: _buildMessageList(
+                        messages,
+                        listCount,
+                        showTyping,
+                        showStreaming,
+                        hasError,
+                        partner,
+                      ),
+                    ),
+                  ],
                 ),
-                _buildPartnerHeader(partner),
                 if (_noConnection) _buildNoConnectionBanner(),
                 _buildInputArea(),
               ],
@@ -401,56 +446,50 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     );
   }
 
-  Widget _buildPartnerHeader(Partner? partner) {
+  Widget _buildHeader(Partner? partner) {
     final partnerName = partner?.name ?? 'Eden';
-    final partnerMood = _formatMood(partner?.currentMood);
 
-    return Positioned(
-      top: 0,
-      left: 0,
-      right: 0,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        color: Colors.black.withValues(alpha: 0.14 + (_headerOpacity * 0.14)),
-        child: SizedBox(
-          height: 80.0,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Positioned(
-                left: 12,
-                child: IconButton(
-                  icon: const Icon(Icons.person_outline_rounded, size: 20),
-                  color: Colors.white70,
-                  onPressed: () => context.push(AppRoute.profile),
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Profile',
-                ),
-              ),
-              Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(partnerName, style: _displayStyle(28)),
-                  const SizedBox(height: 2.0),
-                  Text(
-                    '$partnerName · $partnerMood',
-                    style: _bodyStyle(12, color: Colors.white60),
-                  ),
-                ],
-              ),
-              Positioned(
-                right: 12,
-                child: IconButton(
-                  icon: const Icon(Icons.bookmark_border_rounded, size: 20),
-                  color: Colors.white70,
-                  onPressed: () => context.push(AppRoute.memory),
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Memory',
-                ),
-              ),
-            ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        Nocturne.space4,
+        Nocturne.space5,
+        Nocturne.space4,
+        Nocturne.space6,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _HeaderActionButton(
+            icon: Icons.person_outline_rounded,
+            tooltip: 'Profile',
+            onPressed: () => context.push(AppRoute.profile),
           ),
-        ),
+          Expanded(
+            child: Column(
+              children: [
+                Text(
+                  partnerName,
+                  style: Nocturne.displayMd.copyWith(fontSize: 30),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: Nocturne.space2),
+                Text(
+                  _presenceLine(partner),
+                  style: Nocturne.label.copyWith(
+                    color: Nocturne.textTertiary,
+                    letterSpacing: 0.4,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          _HeaderActionButton(
+            icon: Icons.bookmark_border_rounded,
+            tooltip: 'Memory',
+            onPressed: () => context.push(AppRoute.memory),
+          ),
+        ],
       ),
     );
   }
@@ -463,32 +502,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
     bool hasError,
     Partner? partner,
   ) {
+    final partnerName = partner?.name ?? 'Eden';
+
     if (_isInitializing) {
-      return Center(
-        child: FakeGlass(
-          shape: const LiquidRoundedSuperellipse(borderRadius: 18),
-          settings: GlassTheme.card,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            child: Text(
-              'gathering presence...',
-              style: _bodyStyle(12, color: Colors.white60)
-                  .copyWith(fontStyle: FontStyle.italic),
-            ),
-          ),
-        ),
+      return const Center(
+        child: _QuietLoadingState(label: 'Gathering presence...'),
       );
     }
 
     if (messages.isEmpty && !showTyping && !showStreaming && !hasError) {
-      final partnerName = partner?.name ?? 'Eden';
-      return Center(
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(
+          Nocturne.space8,
+          Nocturne.space9,
+          Nocturne.space8,
+          180,
+        ),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(partnerName, style: _displayStyle(36)),
-            const SizedBox(height: 8.0),
-            Text('say something', style: _bodyStyle(12, color: Colors.white54)),
+            Text(
+              _presenceLine(partner),
+              style: Nocturne.label.copyWith(color: Nocturne.textTertiary),
+            ),
+            const SizedBox(height: Nocturne.space7),
+            Text(
+              partnerName,
+              style: Nocturne.displayXl,
+            ),
+            const SizedBox(height: Nocturne.space4),
+            Text(
+              'The conversation starts softly here.',
+              style: Nocturne.bodyLg.copyWith(color: Nocturne.textSecondary),
+            ),
           ],
         ),
       );
@@ -496,22 +542,50 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.only(top: 80.0, bottom: 120.0),
-      itemCount: listCount,
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(
+        Nocturne.space8,
+        Nocturne.space5,
+        Nocturne.space8,
+        170,
+      ),
+      itemCount: listCount + 1,
       itemBuilder: (context, index) {
-        if (hasError && index == listCount - 1) {
-          return GestureDetector(
-            onTap: _retrySendMessage,
-            behavior: HitTestBehavior.opaque,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16.0),
-              child: Center(
-                child: Text(
-                  _errorMessage!,
-                  style: _bodyStyle(12, color: Colors.white60).copyWith(
-                    decoration: TextDecoration.underline,
-                    decorationColor: Colors.white60,
-                  ),
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: Nocturne.space8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _presenceLine(partner),
+                  style: Nocturne.label.copyWith(color: Nocturne.textTertiary),
+                ),
+                const SizedBox(height: Nocturne.space2),
+                Text(
+                  _relationshipLine(partner),
+                  style:
+                      Nocturne.bodySm.copyWith(color: Nocturne.textSecondary),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final adjustedIndex = index - 1;
+
+        if (hasError && adjustedIndex == listCount - 1) {
+          return Padding(
+            padding: const EdgeInsets.only(top: Nocturne.space6),
+            child: GestureDetector(
+              onTap: _retrySendMessage,
+              behavior: HitTestBehavior.opaque,
+              child: Text(
+                _errorMessage!,
+                style: Nocturne.bodySm.copyWith(
+                  color: Nocturne.textSecondary,
+                  decoration: TextDecoration.underline,
+                  decorationColor: Nocturne.textSecondary,
                 ),
               ),
             ),
@@ -520,38 +594,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
         if (showTyping || showStreaming) {
           final indicatorIndex = hasError ? listCount - 2 : listCount - 1;
-          if (index == indicatorIndex) {
+          if (adjustedIndex == indicatorIndex) {
             if (showTyping) {
               final isFollowUp = ref.watch(currentBurstIndexProvider) > 0;
               final overrideDurationMs = ref.watch(typingDurationProvider);
-              final overrideDuration = overrideDurationMs != null
-                  ? Duration(milliseconds: overrideDurationMs)
-                  : null;
-              return Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: const EdgeInsets.only(
-                      left: 20.0, top: 12.0, bottom: 12.0),
-                  child: FakeGlass(
-                    shape: const LiquidRoundedSuperellipse(borderRadius: 16),
-                    settings: GlassTheme.card,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12.0),
-                      child: TypingIndicatorV2(
-                        isActive: true,
-                        isFollowUp: isFollowUp,
-                        overrideDuration: overrideDuration,
-                        dotSize: 8.0,
-                        spacing: 6.0,
-                      ),
-                    ),
+              return Padding(
+                padding: const EdgeInsets.only(top: Nocturne.space6),
+                child: _TextualTypingIndicator(
+                  label: _typingActivityLabel(
+                    partnerName: partnerName,
+                    isFollowUp: isFollowUp,
+                    overrideDurationMs: overrideDurationMs,
                   ),
                 ),
               );
             }
 
             final text = ref.read(streamingTextProvider);
-            return _GlassMessageBubble(
+            return _MessageBubble(
               message: Message(
                 id: -1,
                 role: MessageRole.partner,
@@ -563,13 +623,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           }
         }
 
-        final msgIndex = messages.length - 1 - index;
-        final msg = messages[msgIndex];
-        final showTimestamp = _shouldShowTimestamp(messages, index);
+        final messageIndex = messages.length - 1 - adjustedIndex;
+        final message = messages[messageIndex];
+        final showTimestamp = _shouldShowTimestamp(messages, adjustedIndex);
 
         String? customTimestampText;
-        if (msg.id == _firstProactiveMessageId) {
-          final diff = DateTime.now().difference(msg.sentAt);
+        if (message.id == _firstProactiveMessageId) {
+          final diff = DateTime.now().difference(message.sentAt);
           if (diff.inDays >= 1) {
             customTimestampText =
                 '${diff.inDays} ${diff.inDays == 1 ? "day" : "days"} ago';
@@ -581,9 +641,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           }
         }
 
-        return _GlassMessageBubble(
-          key: ValueKey('bubble_${msg.id}'),
-          message: msg,
+        return _MessageBubble(
+          key: ValueKey('bubble_${message.id}'),
+          message: message,
           showTimestamp: showTimestamp || customTimestampText != null,
           customTimestampText: customTimestampText,
         );
@@ -593,28 +653,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
 
   Widget _buildNoConnectionBanner() {
     return Positioned(
-      top: 90.0,
-      left: 20.0,
-      right: 20.0,
+      top: 108,
+      left: Nocturne.space8,
+      right: Nocturne.space8,
       child: IgnorePointer(
         ignoring: true,
         child: Center(
-          child: FakeGlass(
-            shape: const LiquidRoundedSuperellipse(borderRadius: 14),
-            settings: GlassTheme.card,
-            child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.cloud_off,
-                      size: 16.0, color: Colors.white60),
-                  const SizedBox(width: 8.0),
-                  Text('no connection',
-                      style: _bodyStyle(12, color: Colors.white60)),
-                ],
-              ),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: Nocturne.space5,
+              vertical: Nocturne.space3,
+            ),
+            decoration: BoxDecoration(
+              color: Nocturne.bgOverlay,
+              borderRadius: BorderRadius.circular(Nocturne.radiusPill),
+              border: Border.all(color: Nocturne.borderSubtle),
+            ),
+            child: Text(
+              'No connection',
+              style: Nocturne.bodySm.copyWith(color: Nocturne.textSecondary),
             ),
           ),
         ),
@@ -625,19 +682,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   Widget _buildInputArea() {
     final isComposing = ref.watch(isComposingProvider);
     final isTyping = ref.watch(isTypingProvider);
+    final currentBurstIndex = ref.watch(currentBurstIndexProvider);
+    final typingDuration = ref.watch(typingDurationProvider);
     final partner = ref.watch(partnerProvider);
-    final partnerName = partner?.name.toLowerCase() ?? 'partner';
+    final partnerName = partner?.name ?? 'Eden';
 
     return Positioned(
-      bottom: 0,
       left: 0,
       right: 0,
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 16.0,
-          right: 16.0,
-          top: 8.0,
-          bottom: MediaQuery.of(context).padding.bottom + 8.0,
+      bottom: 0,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(
+          Nocturne.space6,
+          Nocturne.space5,
+          Nocturne.space6,
+          MediaQuery.of(context).padding.bottom + Nocturne.space5,
+        ),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.black.withValues(alpha: 0.0),
+              Colors.black.withValues(alpha: 0.68),
+              Colors.black.withValues(alpha: 0.92),
+            ],
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -645,77 +715,101 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
           children: [
             if (isComposing && isTyping)
               Padding(
-                padding: const EdgeInsets.only(left: 20.0, bottom: 6.0),
-                child: Text(
-                  '$partnerName is typing...',
-                  style: _bodyStyle(12, color: Colors.white60)
-                      .copyWith(fontStyle: FontStyle.italic),
+                padding: const EdgeInsets.only(
+                  left: Nocturne.space4,
+                  bottom: Nocturne.space3,
                 ),
-              ),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: FakeGlass(
-                    shape: const LiquidRoundedSuperellipse(borderRadius: 20),
-                    settings: const LiquidGlassSettings(
-                      blur: 6,
-                      glassColor: Color(0x20FFFFFF),
-                    ),
-                    child: TextField(
-                      controller: _inputController,
-                      focusNode: _inputFocusNode,
-                      readOnly: isComposing,
-                      style: _bodyStyle(
-                        18,
-                        color: isComposing ? Colors.white60 : Colors.white,
-                      ),
-                      maxLines: 4,
-                      minLines: 1,
-                      cursorColor: EdenColors.electricBlue,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: InputDecoration(
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 20.0,
-                          vertical: 12.0,
-                        ),
-                        hintText: 'message',
-                        hintStyle: _bodyStyle(
-                          18,
-                          color: Colors.white.withValues(alpha: 0.4),
-                        ),
-                      ),
-                    ),
+                child: Text(
+                  _typingActivityLabel(
+                    partnerName: partnerName,
+                    isFollowUp: currentBurstIndex > 0,
+                    overrideDurationMs: typingDuration,
+                  ),
+                  style: Nocturne.bodySm.copyWith(
+                    color: Nocturne.textSecondary,
+                    fontStyle: FontStyle.italic,
                   ),
                 ),
-                const SizedBox(width: 8.0),
-                AnimatedOpacity(
-                  opacity: (_showSendButton && !isComposing) ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 200),
-                  child: IgnorePointer(
-                    ignoring: !_showSendButton || isComposing,
-                    child: GlassGlow(
-                      glowColor: EdenColors.amberGlow,
-                      glowRadius: 0.8,
-                      child: FakeGlass(
-                        shape: const LiquidOval(),
-                        settings: GlassTheme.button,
-                        child: IconButton(
-                          onPressed: () => _sendMessage(),
-                          icon: const Icon(
-                            Icons.arrow_upward_rounded,
-                            color: Colors.white,
-                            size: 20,
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFF0A0B0D),
+                borderRadius: BorderRadius.circular(Nocturne.radiusLg),
+                border: Border.all(color: Nocturne.borderSubtle),
+                boxShadow: Nocturne.elevationMedium,
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Nocturne.space5,
+                  Nocturne.space3,
+                  Nocturne.space3,
+                  Nocturne.space3,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _inputController,
+                        focusNode: _inputFocusNode,
+                        readOnly: isComposing,
+                        style: Nocturne.bodyXl.copyWith(
+                          color: isComposing
+                              ? Nocturne.textSecondary
+                              : Nocturne.textPrimary,
+                        ),
+                        minLines: 1,
+                        maxLines: 5,
+                        textCapitalization: TextCapitalization.sentences,
+                        cursorColor: Nocturne.accentCool,
+                        decoration: InputDecoration(
+                          isCollapsed: true,
+                          filled: false,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          hintText: 'Say what you mean',
+                          hintStyle: Nocturne.bodyLg.copyWith(
+                            color: Nocturne.textTertiary,
                           ),
                         ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: Nocturne.space3),
+                    AnimatedContainer(
+                      duration: Nocturne.durationFast,
+                      curve: Curves.easeOutCubic,
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: _showSendButton && !isComposing
+                            ? Nocturne.textPrimary
+                            : Nocturne.bgSurface,
+                        borderRadius:
+                            BorderRadius.circular(Nocturne.radiusLg - 2),
+                        border: Border.all(
+                          color: _showSendButton && !isComposing
+                              ? Colors.transparent
+                              : Nocturne.borderSubtle,
+                        ),
+                      ),
+                      child: IconButton(
+                        onPressed: _showSendButton && !isComposing
+                            ? () => _sendMessage()
+                            : null,
+                        tooltip: 'Send',
+                        icon: Icon(
+                          Icons.arrow_upward_rounded,
+                          size: Nocturne.iconLg,
+                          color: _showSendButton && !isComposing
+                              ? Nocturne.black
+                              : Nocturne.textTertiary,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ],
         ),
@@ -724,28 +818,173 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   }
 }
 
-TextStyle _displayStyle(double size, {Color color = Colors.white}) {
-  return TextStyle(
-    fontFamily: 'CormorantGaramond',
-    fontWeight: FontWeight.w300,
-    fontSize: size,
-    color: color,
-    height: 1.12,
-  );
+class _ChatBackdrop extends StatelessWidget {
+  const _ChatBackdrop();
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          const ColoredBox(color: Colors.black),
+          Positioned(
+            top: -120,
+            left: -40,
+            child: IgnorePointer(
+              child: Container(
+                width: 240,
+                height: 240,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      Nocturne.accentWarm.withValues(alpha: 0.10),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 180,
+            right: -80,
+            child: IgnorePointer(
+              child: Container(
+                width: 260,
+                height: 260,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      Nocturne.accentCool.withValues(alpha: 0.09),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-TextStyle _bodyStyle(double size, {Color color = Colors.white}) {
-  return TextStyle(
-    fontFamily: 'PlusJakartaSans',
-    fontWeight: FontWeight.w400,
-    fontSize: size,
-    color: color,
-    height: 1.45,
-  );
+class _HeaderActionButton extends StatelessWidget {
+  const _HeaderActionButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 44,
+      height: 44,
+      child: IconButton(
+        onPressed: onPressed,
+        tooltip: tooltip,
+        splashRadius: 20,
+        icon: Icon(
+          icon,
+          size: Nocturne.iconLg,
+          color: Nocturne.textSecondary,
+        ),
+      ),
+    );
+  }
 }
 
-class _GlassMessageBubble extends StatelessWidget {
-  const _GlassMessageBubble({
+class _QuietLoadingState extends StatelessWidget {
+  const _QuietLoadingState({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.4,
+            valueColor: AlwaysStoppedAnimation<Color>(
+              Nocturne.textSecondary.withValues(alpha: 0.75),
+            ),
+          ),
+        ),
+        const SizedBox(height: Nocturne.space5),
+        Text(
+          label,
+          style: Nocturne.bodySm.copyWith(color: Nocturne.textSecondary),
+        ),
+      ],
+    );
+  }
+}
+
+class _TextualTypingIndicator extends StatefulWidget {
+  const _TextualTypingIndicator({required this.label});
+
+  final String label;
+
+  @override
+  State<_TextualTypingIndicator> createState() =>
+      _TextualTypingIndicatorState();
+}
+
+class _TextualTypingIndicatorState extends State<_TextualTypingIndicator> {
+  static const _suffixes = ['', '.', '..', '...'];
+  late Timer _timer;
+  int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(milliseconds: 480), (_) {
+      if (!mounted) return;
+      setState(() {
+        _index = (_index + 1) % _suffixes.length;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = widget.label.replaceAll('...', '');
+
+    return AnimatedSwitcher(
+      duration: Nocturne.durationFast,
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      child: Text(
+        '$normalized${_suffixes[_index]}',
+        key: ValueKey('${widget.label}_${_suffixes[_index]}'),
+        style: Nocturne.bodySm.copyWith(
+          color: Nocturne.textSecondary,
+          fontStyle: FontStyle.italic,
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({
     super.key,
     required this.message,
     required this.showTimestamp,
@@ -759,49 +998,60 @@ class _GlassMessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.isUser;
+    final bubbleColor =
+        isUser ? const Color(0xFFF1F3F6) : const Color(0xFF111317);
+    final textColor = isUser ? Colors.black : Nocturne.textPrimary;
+    final borderColor =
+        isUser ? Colors.transparent : Colors.white.withValues(alpha: 0.08);
 
-    return Column(
-      crossAxisAlignment:
-          isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-      children: [
-        if (showTimestamp)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10.0),
-            child: Center(
+    return Padding(
+      padding: EdgeInsets.only(
+        top: showTimestamp ? Nocturne.space7 : Nocturne.space4,
+      ),
+      child: Column(
+        crossAxisAlignment:
+            isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          if (showTimestamp)
+            Padding(
+              padding: const EdgeInsets.only(bottom: Nocturne.space4),
               child: Text(
                 customTimestampText ?? _formatTimestamp(message.sentAt),
-                style: _bodyStyle(11, color: Colors.white54),
+                style: Nocturne.bodySm.copyWith(color: Nocturne.textTertiary),
+              ),
+            ),
+          Align(
+            alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 320),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: bubbleColor,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(20),
+                    topRight: const Radius.circular(20),
+                    bottomLeft: Radius.circular(isUser ? 20 : 8),
+                    bottomRight: Radius.circular(isUser ? 8 : 20),
+                  ),
+                  border: Border.all(color: borderColor),
+                  boxShadow: isUser ? Nocturne.elevationLow : const [],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: Nocturne.space5,
+                    vertical: Nocturne.space4,
+                  ),
+                  child: Text(
+                    message.content,
+                    style:
+                        Nocturne.bodyLg.copyWith(color: textColor, height: 1.5),
+                  ),
+                ),
               ),
             ),
           ),
-        Align(
-          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            margin: EdgeInsets.only(
-              left: isUser ? 56.0 : 20.0,
-              right: isUser ? 20.0 : 56.0,
-              top: 4.0,
-              bottom: 4.0,
-            ),
-            child: FakeGlass(
-              shape: const LiquidRoundedSuperellipse(borderRadius: 16),
-              settings: LiquidGlassSettings(
-                thickness: 18,
-                blur: 12,
-                glassColor:
-                    isUser ? const Color(0x20FFFFFF) : const Color(0x10FFFFFF),
-                saturation: 1.3,
-                refractiveIndex: 1.45,
-                lightIntensity: 1.3,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Text(message.content, style: _bodyStyle(16)),
-              ),
-            ),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
