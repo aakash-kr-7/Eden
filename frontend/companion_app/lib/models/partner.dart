@@ -1,10 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: partner.dart
 // PURPOSE: Partner model representing companion characteristics and state.
+// RESPONSIBILITIES: Represent partner attributes consumed by services, providers, and screens.
+// NEVER: Contain widget code, routing, or network logic.
 // CONTEXT: Frontend data models.
 // ═══════════════════════════════════════════════════════════════════
 
-// FILE: models/partner.dart  
+// FILE: models/partner.dart
 // PURPOSE: Partner data model — name, stage, current mood, energy.
 
 enum RelationshipStage {
@@ -36,11 +38,15 @@ class Partner {
   });
 
   factory Partner.fromJson(Map<String, dynamic> json) {
-    final stageStr = (json['relationship_stage'] ?? json['stage'] ?? 'new').toString().toLowerCase();
+    final stageStr = (json['relationship_stage'] ?? json['stage'] ?? 'new')
+        .toString()
+        .toLowerCase();
     RelationshipStage stage;
     if (stageStr == 'new') {
       stage = RelationshipStage.newStage;
-    } else if (stageStr == 'warming' || stageStr == 'familiar' || stageStr == 'settled') {
+    } else if (stageStr == 'warming' ||
+        stageStr == 'familiar' ||
+        stageStr == 'settled') {
       stage = RelationshipStage.familiar;
     } else if (stageStr == 'close') {
       stage = RelationshipStage.close;

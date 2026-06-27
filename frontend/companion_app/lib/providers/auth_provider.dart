@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: auth_provider.dart
 // PURPOSE: Riverpod provider managing user authentication state.
+// RESPONSIBILITIES: Expose reactive auth state for frontend consumers.
+// NEVER: Contain widget layout, routing definitions, or API transport logic.
 // CONTEXT: Frontend state providers.
 // ═══════════════════════════════════════════════════════════════════
 

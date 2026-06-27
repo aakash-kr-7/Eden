@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: services/api_service.dart
 // PURPOSE: All HTTP communication with Eden backend. Auth token injected automatically.
+// RESPONSIBILITIES: Build requests, parse responses, and preserve existing API contracts.
+// NEVER: Contain widget logic, route flow, or backend business rule rewrites.
 // CONTEXT: Used by all Riverpod providers to fetch data from FastAPI.
 // ═══════════════════════════════════════════════════════════════════
 

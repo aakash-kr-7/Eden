@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: burst_playback_service.dart
 // PURPOSE: Service managing scheduled playback of message bursts.
+// RESPONSIBILITIES: Coordinate burst timing helpers used by the chat experience.
+// NEVER: Contain backend transport changes or screen layout code.
 // CONTEXT: Frontend services.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -26,9 +28,10 @@ class BurstPlaybackService {
     for (int i = 0; i < messages.length; i++) {
       // Get delay in seconds, fallback to 1.5 seconds if index is out of bounds
       final delaySeconds = i < delays.length ? delays[i] : 1.5;
-      
+
       // Wait for its delay
-      await Future.delayed(Duration(milliseconds: (delaySeconds * 1000).toInt()));
+      await Future.delayed(
+          Duration(milliseconds: (delaySeconds * 1000).toInt()));
 
       // Hide typing indicator
       onTyping(false);

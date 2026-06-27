@@ -5,6 +5,8 @@
 //          bloom exit. Total ~4s. No skip.
 // ═══════════════════════════════════════════════════════════════════
 
+// RESPONSIBILITIES: Play the splash sequence and hand off into auth or chat.
+// NEVER: Contain backend logic or persistent app state ownership.
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -114,7 +116,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     await Future.delayed(const Duration(milliseconds: 80));
     if (!mounted) return;
 
-    context.go(isAuth ? '/chat' : '/auth');
+    context.go(isAuth ? AppRoute.chat : AppRoute.auth);
   }
 
   @override

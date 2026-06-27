@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: models.dart
 // PURPOSE: Aggregated exports for Eden data models.
+// RESPONSIBILITIES: Provide a single import surface for shared frontend model types.
+// NEVER: Contain runtime logic, widget code, or service behavior.
 // CONTEXT: Frontend data models.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -69,7 +71,9 @@ class MessageResponse {
 
   factory MessageResponse.fromJson(Map<String, dynamic> json) {
     final burstsData = json['bursts'] as List<dynamic>? ?? const [];
-    final bursts = burstsData.map((e) => ChatBurst.fromJson(e as Map<String, dynamic>)).toList();
+    final bursts = burstsData
+        .map((e) => ChatBurst.fromJson(e as Map<String, dynamic>))
+        .toList();
     return MessageResponse(
       reply: json['reply'] as String? ?? '',
       bursts: bursts,

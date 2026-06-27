@@ -1,15 +1,20 @@
+// FILE: screens/onboarding_screen.dart
+// PURPOSE: Runs the first-launch onboarding flow and hands off to chat.
+// RESPONSIBILITIES: Present onboarding steps and delegate state changes to the onboarding provider.
+// NEVER: Contain backend contract changes or unrelated global orchestration.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
+import '../main.dart';
 import '../providers/onboarding_provider.dart';
 import '../theme/eden_colors.dart';
 import '../theme/eden_typography.dart';
 import '../theme/glass_theme.dart';
+import '../components/glass.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -421,7 +426,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen>
                         width: 220.0,
                         onTap: () {
                           HapticFeedback.selectionClick();
-                          context.go('/chat');
+                          context.go(AppRoute.chat);
                         },
                       ),
                     ),

@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: biometric_service.dart
 // PURPOSE: Service managing local biometric lock auth.
+// RESPONSIBILITIES: Check biometric availability and run local device authentication prompts.
+// NEVER: Contain remote auth rules, screen rendering, or route setup.
 // CONTEXT: Frontend services.
 // ═══════════════════════════════════════════════════════════════════
 

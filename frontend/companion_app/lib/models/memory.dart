@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: memory.dart
 // PURPOSE: Memory model definition for local caching and api communication.
+// RESPONSIBILITIES: Represent memory data exchanged between services, cache, and providers.
+// NEVER: Contain widget logic, routing, or network side effects.
 // CONTEXT: Frontend data models.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -117,8 +119,8 @@ class Memory {
     }
 
     final rawCreatedAt = json['created_at'];
-    final createdAt = rawCreatedAt != null 
-        ? DateTime.parse(rawCreatedAt.toString()) 
+    final createdAt = rawCreatedAt != null
+        ? DateTime.parse(rawCreatedAt.toString())
         : DateTime.now();
 
     final isPinnedIntOrBool = json['is_pinned'];
@@ -126,9 +128,12 @@ class Memory {
 
     return Memory(
       id: parsedId,
-      memoryText: json['memory_text'] as String? ?? json['content'] as String? ?? '',
+      memoryText:
+          json['memory_text'] as String? ?? json['content'] as String? ?? '',
       memoryType: type,
-      salienceScore: (json['salience_score'] as num?)?.toDouble() ?? (json['salience'] as num?)?.toDouble() ?? 0.5,
+      salienceScore: (json['salience_score'] as num?)?.toDouble() ??
+          (json['salience'] as num?)?.toDouble() ??
+          0.5,
       emotionalValence: json['emotional_valence'] as String?,
       isPinned: isPinned,
       recallCount: json['recall_count'] as int? ?? 0,

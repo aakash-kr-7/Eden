@@ -4,6 +4,8 @@
 // CONTEXT: Used by auth_provider.dart and routing logic in main.dart.
 // ═══════════════════════════════════════════════════════════════════
 
+// RESPONSIBILITIES: Expose auth state and frontend auth actions to the rest of the app.
+// NEVER: Contain screen composition, navigation flow, or backend API changes.
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -25,7 +27,8 @@ class AuthService {
         throw const AuthException('Google sign-in cancelled by user');
       }
 
-      final GoogleSignInAuthentication googleAuth = await googleAccount.authentication;
+      final GoogleSignInAuthentication googleAuth =
+          await googleAccount.authentication;
       final OAuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,

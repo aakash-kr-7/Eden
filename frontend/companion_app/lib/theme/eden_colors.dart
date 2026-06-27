@@ -1,71 +1,49 @@
+// FILE: theme/eden_colors.dart
+// PURPOSE: Backward-compatible color aliases while Nocturne becomes the single source of truth.
+// RESPONSIBILITIES: Forward legacy color references to Nocturne without owning design decisions.
+// NEVER: Define independent palette values or diverge from Nocturne.
 import 'package:flutter/material.dart';
+
+import 'nocturne.dart';
 
 class EdenColors {
   EdenColors._();
 
-  // Core brand palette
-  static const Color black = Color(0xFF050507);
-  static const Color edenVoid = Color(0xFF070711);
-  static const Color edenDepth = Color(0xFF100D26);
-  static const Color edenSurface = Color(0xFF18132F);
-  static const Color edenElevated = Color(0xFF22183F);
-  static const Color deepPurple = Color(0xFF2D0B4E);
+  static const Color black = Nocturne.black;
+  static const Color edenVoid = Nocturne.bgPrimary;
+  static const Color edenDepth = Nocturne.bgPrimary;
+  static const Color edenSurface = Nocturne.bgSurface;
+  static const Color edenElevated = Nocturne.bgElevated;
+  static const Color deepPurple = Nocturne.bgSurface;
 
-  static const Color edenIris = Color(0xFF8B5CF6);
-  static const Color edenIrisDim = Color(0x338B5CF6);
-  static const Color edenIrisGlow = Color(0x668B5CF6);
-  static const Color edenBlush = Color(0xFFFF7C91);
-  static const Color edenGold = Color(0xFFFFD18A);
-  static const Color electricBlue = Color(0xFF00E5FF);
-  static const Color orangeGlow = Color(0xFFFF6D00);
-  static const Color amberGlow = Color(0xFFFFAB00);
-  static const Color softGlow = Color(0x40FFFFFF);
+  static const Color edenIris = Nocturne.accentCool;
+  static const Color edenIrisDim = Color(0x3398A7FF);
+  static const Color edenIrisGlow = Color(0x6698A7FF);
+  static const Color edenBlush = Nocturne.accentRose;
+  static const Color edenGold = Nocturne.accentWarm;
+  static const Color electricBlue = Nocturne.accentCool;
+  static const Color orangeGlow = Nocturne.destructive;
+  static const Color amberGlow = Nocturne.accentWarm;
+  static const Color softGlow = Color(0x26FFFFFF);
 
-  // Atmospheric accents
-  static const Color presenceBlue = Color(0xFF55D6FF);
-  static const Color warmViolet = Color(0xFFA778FF);
-  static const Color humanWarmth = Color(0xFFFF9B80);
-  static const Color edenSage = Color(0xFF9AD9B5);
+  static const Color presenceBlue = Nocturne.accentCool;
+  static const Color warmViolet = Nocturne.accentCool;
+  static const Color humanWarmth = Nocturne.accentWarm;
+  static const Color edenSage = Nocturne.success;
 
-  // Text
-  static const Color textPrimary = Color(0xFFF8F5FF);
-  static const Color textSecondary = Color(0xB8F8F5FF);
-  static const Color textTertiary = Color(0x73F8F5FF);
-  static const Color textAccent = edenGold;
-  static const Color textPartner = Color(0xFFEDE4FF);
+  static const Color textPrimary = Nocturne.textPrimary;
+  static const Color textSecondary = Nocturne.textSecondary;
+  static const Color textTertiary = Nocturne.textTertiary;
+  static const Color textAccent = Nocturne.accentWarm;
+  static const Color textPartner = Nocturne.textPrimary;
 
-  // Glass
-  static const Color glassLight = Color(0x14FFFFFF);
-  static const Color glassMedium = Color(0x24FFFFFF);
-  static const Color glassStrong = Color(0x36FFFFFF);
-  static const Color glassBorder = Color(0x26FFFFFF);
-  static const Color glassShimmer = Color(0x45FFFFFF);
-  static const Color edenRim = glassBorder;
+  static const Color glassLight = Color(0xCC111317);
+  static const Color glassMedium = Color(0xDD171A1F);
+  static const Color glassStrong = Color(0xF014171C);
+  static const Color glassBorder = Nocturne.borderStrong;
+  static const Color glassShimmer = Nocturne.borderSubtle;
+  static const Color edenRim = Nocturne.borderSubtle;
 
-  // Semantics
-  static const Color semanticError = Color(0xFFFF6B86);
-  static const Color semanticSuccess = Color(0xFF79E6A3);
-
-  static const LinearGradient backgroundGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [
-      edenVoid,
-      edenDepth,
-      deepPurple,
-      edenSurface,
-      black,
-    ],
-    stops: [0.0, 0.28, 0.55, 0.78, 1.0],
-  );
-
-  static const LinearGradient logoGlowGradient = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [
-      edenGold,
-      edenBlush,
-      edenIris,
-    ],
-  );
+  static const Color semanticError = Nocturne.destructive;
+  static const Color semanticSuccess = Nocturne.success;
 }

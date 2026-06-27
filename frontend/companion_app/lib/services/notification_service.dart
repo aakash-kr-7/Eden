@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: notification_service.dart
 // PURPOSE: Service managing push notifications and local channels.
+// RESPONSIBILITIES: Initialize notification plumbing and bridge taps back into the app.
+// NEVER: Contain screen rendering, auth ownership, or backend rule changes.
 // CONTEXT: Frontend services.
 // ═══════════════════════════════════════════════════════════════════
 

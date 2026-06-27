@@ -1,3 +1,7 @@
+// FILE: models/message_v2.g.dart
+// PURPOSE: Hold generated serialization code for the message model.
+// RESPONSIBILITIES: Support code generation output required by local persistence.
+// NEVER: Contain manual business logic or hand-maintained UI behavior.
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 part of 'message_v2.dart';

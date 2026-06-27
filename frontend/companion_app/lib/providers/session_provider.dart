@@ -1,10 +1,12 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: session_provider.dart
 // PURPOSE: Riverpod provider managing active companion session.
+// RESPONSIBILITIES: Load and expose the current session payload to frontend consumers.
+// NEVER: Contain widget rendering, route flow, or backend contract changes.
 // CONTEXT: Frontend state providers.
 // ═══════════════════════════════════════════════════════════════════
 
-// FILE: providers/session_provider.dart  
+// FILE: providers/session_provider.dart
 // PURPOSE: Session state — partner info, conversation id, unread messages.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';

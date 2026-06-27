@@ -1,15 +1,19 @@
+// FILE: screens/auth_screen.dart
+// PURPOSE: Handles sign-in and sign-up without changing backend auth behavior.
+// RESPONSIBILITIES: Present auth UI and forward user actions into existing auth services.
+// NEVER: Contain backend contract changes or app bootstrap responsibilities.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
 import '../main.dart';
 import '../services/auth_service.dart';
 import '../theme/eden_colors.dart';
 import '../theme/eden_typography.dart';
 import '../theme/glass_theme.dart';
+import '../components/glass.dart';
 
 class AuthScreen extends ConsumerStatefulWidget {
   const AuthScreen({super.key});
@@ -80,7 +84,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
     try {
       await ref.read(authServiceProvider).signInWithGoogle();
       if (mounted) {
-        context.go('/');
+        context.go(AppRoute.boot);
       }
     } catch (e) {
       if (mounted) {
@@ -112,7 +116,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
           .read(authServiceProvider)
           .signInWithEmailPassword(email, password);
       if (mounted) {
-        context.go('/');
+        context.go(AppRoute.boot);
       }
     } on AuthException catch (e) {
       if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
@@ -121,7 +125,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen>
               .read(authServiceProvider)
               .signUpWithEmailPassword(email, password);
           if (mounted) {
-            context.go('/');
+            context.go(AppRoute.boot);
           }
         } on AuthException catch (signUpError) {
           if (mounted) {

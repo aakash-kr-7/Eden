@@ -1,9 +1,14 @@
+// FILE: screens/boot_screen.dart
+// PURPOSE: Plays the boot animation, then advances into the existing app flow.
+// RESPONSIBILITIES: Play startup media and hand off to splash at the right time.
+// NEVER: Contain auth policy, provider ownership, or backend logic.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:video_player/video_player.dart';
 
+import '../main.dart';
 import '../theme/eden_colors.dart';
 
 class BootScreen extends StatefulWidget {
@@ -56,7 +61,7 @@ class _BootScreenState extends State<BootScreen> {
   void _navigateToSplash() {
     if (_hasNavigated || !mounted) return;
     _hasNavigated = true;
-    context.go('/splash');
+    context.go(AppRoute.splash);
   }
 
   @override

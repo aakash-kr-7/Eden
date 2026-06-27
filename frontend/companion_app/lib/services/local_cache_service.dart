@@ -4,6 +4,8 @@
 // CONTEXT: Used by chat screen to show messages before backend responds.
 // ═══════════════════════════════════════════════════════════════════
 
+// RESPONSIBILITIES: Persist lightweight local cache data for frontend responsiveness.
+// NEVER: Contain widget state, route definitions, or remote API logic.
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/models.dart';
@@ -30,11 +32,7 @@ class LocalCacheService {
 
   Future<List<Message>> getRecentMessages({int limit = 50}) async {
     final db = await isar;
-    return await db.messages
-        .where()
-        .sortBySentAtDesc()
-        .limit(limit)
-        .findAll();
+    return await db.messages.where().sortBySentAtDesc().limit(limit).findAll();
   }
 
   Future<void> clearAll() async {

@@ -1,15 +1,19 @@
+// FILE: screens/settings_screen.dart
+// PURPOSE: Manages account, profile, and notification settings without backend contract changes.
+// RESPONSIBILITIES: Render settings UI and forward mutations through existing services.
+// NEVER: Contain backend rule rewrites or app bootstrap logic.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../main.dart';
 import '../theme/eden_colors.dart';
 import '../theme/glass_theme.dart';
+import '../components/glass.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -202,7 +206,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (confirm == true && mounted) {
       await ref.read(authServiceProvider).signOut();
       if (!mounted) return;
-      context.go('/');
+      context.go(AppRoute.boot);
     }
   }
 
@@ -215,7 +219,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await apiService.deleteAccount();
       await ref.read(authServiceProvider).signOut();
       if (mounted) {
-        context.go('/');
+        context.go(AppRoute.boot);
       }
     } catch (e) {
       if (mounted) {
@@ -383,7 +387,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           padding: const EdgeInsets.fromLTRB(24, 12, 24, 48),
           children: [
             Text(
-              'Settings',
+              'Profile',
               style: _bodyStyle(24).copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 24),
@@ -405,7 +409,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     rightText: '$_memoryCount items',
                     icon: Icons.chevron_right_rounded,
                     onTap: () => context
-                        .push('/memories')
+                        .push(AppRoute.memory)
                         .then((_) => _fetchProfileData()),
                   ),
                 ],
@@ -460,7 +464,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     label: 'Your memories',
                     icon: Icons.chevron_right_rounded,
                     onTap: () => context
-                        .push('/memories')
+                        .push(AppRoute.memory)
                         .then((_) => _fetchProfileData()),
                   ),
                   _divider(),

@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: providers/chat_provider_v3.dart
 // PURPOSE: Chat state management with burst composition and typing status support.
+// RESPONSIBILITIES: Own chat-related frontend state and delegate persistence/network work to services.
+// NEVER: Contain widget composition, route registration, or backend contract changes.
 // CONTEXT: Replaces chat_provider_v2.dart.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -12,7 +14,8 @@ import '../main.dart';
 import '../models/models.dart';
 import '../services/local_cache_service.dart';
 
-final localCacheServiceProvider = Provider<LocalCacheService>((ref) => LocalCacheService());
+final localCacheServiceProvider =
+    Provider<LocalCacheService>((ref) => LocalCacheService());
 
 final isTypingProvider = StateProvider<bool>((ref) => false);
 final streamingTextProvider = StateProvider<String>((ref) => '');
@@ -21,7 +24,8 @@ final streamingTextProvider = StateProvider<String>((ref) => '');
 final isComposingProvider = StateProvider<bool>((ref) => false);
 final currentBurstIndexProvider = StateProvider<int>((ref) => 0);
 final typingDurationProvider = StateProvider<int?>((ref) => null);
-final streamingBurstsProvider = StateProvider<List<StreamingBurst>>((ref) => const []);
+final streamingBurstsProvider =
+    StateProvider<List<StreamingBurst>>((ref) => const []);
 
 // V3 user typing and read markers states
 final lastSeenMessageIdProvider = StateProvider<int>((ref) => 0);
@@ -125,7 +129,7 @@ class MessagesNotifier extends StateNotifier<List<Message>> {
 
     try {
       final apiService = _ref.read(apiServiceProvider);
-      
+
       // 3. Open SSE stream
       final stream = apiService.sendMessage(conversationId, text);
 
@@ -135,11 +139,11 @@ class MessagesNotifier extends StateNotifier<List<Message>> {
           try {
             final jsonMap = jsonDecode(data) as Map<String, dynamic>;
             final type = jsonMap['type'] as String?;
-            
+
             if (type == 'typing_start') {
               // "typing_start": show typing indicator
               _ref.read(isTypingProvider.notifier).state = true;
-              
+
               final newBurst = StreamingBurst(
                 id: 'typing_$burstIndex',
                 text: '',
@@ -147,22 +151,27 @@ class MessagesNotifier extends StateNotifier<List<Message>> {
                 state: 'typing',
                 typingStartedAt: DateTime.now(),
               );
-              _ref.read(streamingBurstsProvider.notifier).update((state) => [...state, newBurst]);
-              
+              _ref
+                  .read(streamingBurstsProvider.notifier)
+                  .update((state) => [...state, newBurst]);
             } else if (type == 'burst') {
               // "burst": hide typing, add message burst to list
               _ref.read(isTypingProvider.notifier).state = false;
-              
+
               final burstText = jsonMap['text'] as String? ?? '';
-              final thoughtType = jsonMap['thought_type'] as String? ?? 'statement';
+              final thoughtType =
+                  jsonMap['thought_type'] as String? ?? 'statement';
               final typingMs = jsonMap['typing_ms'] as int? ?? 600;
-              
+
               accumulatedBursts.add(burstText);
-              
-              final partnerMessageId = DateTime.now().millisecondsSinceEpoch + burstIndex;
+
+              final partnerMessageId =
+                  DateTime.now().millisecondsSinceEpoch + burstIndex;
               final partnerMessage = Message(
                 id: partnerMessageId,
-                conversationId: jsonMap['conversation_id']?.toString() ?? conversationId ?? '',
+                conversationId: jsonMap['conversation_id']?.toString() ??
+                    conversationId ??
+                    '',
                 role: MessageRole.partner,
                 content: burstText,
                 sentAt: DateTime.now(),
@@ -171,30 +180,35 @@ class MessagesNotifier extends StateNotifier<List<Message>> {
                 burstIndex: burstIndex,
                 burstTotal: null, // set in done
               );
-              
+
               _ref.read(streamingBurstsProvider.notifier).update((state) {
                 return state.map((b) {
                   if (b.id == 'typing_$burstIndex') {
-                    return b.copyWith(text: burstText, thoughtType: thoughtType, state: 'showing');
+                    return b.copyWith(
+                        text: burstText,
+                        thoughtType: thoughtType,
+                        state: 'showing');
                   }
                   return b;
                 }).toList();
               });
 
               addMessage(partnerMessage);
-              
-              _ref.read(currentBurstIndexProvider.notifier).state = burstIndex + 1;
+
+              _ref.read(currentBurstIndexProvider.notifier).state =
+                  burstIndex + 1;
               _ref.read(typingDurationProvider.notifier).state = typingMs;
-              
+
               burstIndex++;
-              
             } else if (type == 'done') {
               // "done": mark stream complete, save to DB
               final burstCount = jsonMap['burst_count'] as int? ?? burstIndex;
-              
+
               // Update burstTotal in list
               state = state.map((msg) {
-                if (msg.role == MessageRole.partner && msg.isPartOfBurst && msg.burstTotal == null) {
+                if (msg.role == MessageRole.partner &&
+                    msg.isPartOfBurst &&
+                    msg.burstTotal == null) {
                   return Message(
                     id: msg.id,
                     conversationId: msg.conversationId,
@@ -210,14 +224,17 @@ class MessagesNotifier extends StateNotifier<List<Message>> {
                 }
                 return msg;
               }).toList();
-              
+
               final localCache = _ref.read(localCacheServiceProvider);
               localCache.saveMessages(state.take(burstCount + 1).toList());
 
               completer.complete();
             } else if (type == 'error') {
-              final errMsg = jsonMap['message'] as String? ?? 'Error streaming response';
-              if (!completer.isCompleted) completer.completeError(Exception(errMsg));
+              final errMsg =
+                  jsonMap['message'] as String? ?? 'Error streaming response';
+              if (!completer.isCompleted) {
+                completer.completeError(Exception(errMsg));
+              }
             }
           } catch (e) {
             debugPrint('Error parsing stream chunk: $e');
@@ -244,6 +261,7 @@ class MessagesNotifier extends StateNotifier<List<Message>> {
   }
 }
 
-final messagesProvider = StateNotifierProvider<MessagesNotifier, List<Message>>((ref) {
+final messagesProvider =
+    StateNotifierProvider<MessagesNotifier, List<Message>>((ref) {
   return MessagesNotifier(ref);
 });

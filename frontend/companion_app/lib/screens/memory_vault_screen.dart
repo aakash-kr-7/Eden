@@ -1,13 +1,17 @@
+// FILE: screens/memory_vault_screen.dart
+// PURPOSE: Displays saved memories while preserving provider-driven memory operations.
+// RESPONSIBILITIES: Render memory browsing UI and delegate actions to memory state.
+// NEVER: Contain backend rule changes or app-wide route setup.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
 import '../main.dart';
 import '../models/models.dart';
 import '../providers/memory_provider.dart';
 import '../theme/eden_colors.dart';
 import '../theme/glass_theme.dart';
+import '../components/glass.dart';
 
 class MemoryVaultScreen extends ConsumerStatefulWidget {
   const MemoryVaultScreen({super.key});

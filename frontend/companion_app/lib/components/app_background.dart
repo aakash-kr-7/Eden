@@ -1,15 +1,19 @@
+// FILE: components/app_background.dart
+// PURPOSE: Shared animated background behind the active application flow.
+// RESPONSIBILITIES: Render the app-wide ambient backdrop without owning screen state.
+// NEVER: Contain navigation logic, user interaction flow, or backend calls.
 import 'package:flutter/material.dart';
 
-import '../theme/eden_colors.dart';
+import '../theme/nocturne.dart';
 
-class LiquidBackground extends StatefulWidget {
-  const LiquidBackground({super.key});
+class AppBackground extends StatefulWidget {
+  const AppBackground({super.key});
 
   @override
-  State<LiquidBackground> createState() => _LiquidBackgroundState();
+  State<AppBackground> createState() => _AppBackgroundState();
 }
 
-class _LiquidBackgroundState extends State<LiquidBackground>
+class _AppBackgroundState extends State<AppBackground>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
@@ -40,9 +44,9 @@ class _LiquidBackgroundState extends State<LiquidBackground>
             gradient: RadialGradient(
               center: Alignment(0.1 * (1 - t), -0.3 + 0.2 * t),
               colors: [
-                EdenColors.electricBlue.withValues(alpha: 0.2),
-                EdenColors.deepPurple,
-                EdenColors.black,
+                Nocturne.accentCool.withValues(alpha: 0.2),
+                Nocturne.bgSurface,
+                Nocturne.black,
               ],
               stops: const [0.1, 0.6, 1.0],
             ),

@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: session.dart
 // PURPOSE: Session model mapping companion chat session details.
+// RESPONSIBILITIES: Represent session bootstrap data used by chat-related flows.
+// NEVER: Contain widget logic, route flow, or service side effects.
 // CONTEXT: Frontend data models.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -24,15 +26,21 @@ class ProactiveMessage {
   });
 
   factory ProactiveMessage.fromJson(Map<String, dynamic> json) {
-    final rawSentAt = json['sent_at'] ?? json['delivered_at'] ?? json['scheduled_for'] ?? json['created_at'];
-    final sentAt = rawSentAt != null 
-        ? DateTime.parse(rawSentAt.toString()) 
+    final rawSentAt = json['sent_at'] ??
+        json['delivered_at'] ??
+        json['scheduled_for'] ??
+        json['created_at'];
+    final sentAt = rawSentAt != null
+        ? DateTime.parse(rawSentAt.toString())
         : DateTime.now();
 
     return ProactiveMessage(
       id: json['id']?.toString() ?? '',
-      message: json['message'] as String? ?? json['message_text'] as String? ?? '',
-      triggerType: json['trigger_type'] as String? ?? json['reason'] as String? ?? 'general',
+      message:
+          json['message'] as String? ?? json['message_text'] as String? ?? '',
+      triggerType: json['trigger_type'] as String? ??
+          json['reason'] as String? ??
+          'general',
       sentAt: sentAt,
     );
   }
@@ -70,26 +78,31 @@ class Session {
     final rawMessages = json['recent_messages'];
     List<Message> messages = [];
     if (rawMessages is List) {
-      messages = rawMessages.map((e) => Message.fromJson(e as Map<String, dynamic>)).toList();
+      messages = rawMessages
+          .map((e) => Message.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
 
     final rawProactive = json['unread_proactive'];
     List<ProactiveMessage> proactive = [];
     if (rawProactive is List) {
-      proactive = rawProactive.map((e) => ProactiveMessage.fromJson(e as Map<String, dynamic>)).toList();
+      proactive = rawProactive
+          .map((e) => ProactiveMessage.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
 
     final rawLastSeen = json['last_seen'];
-    final lastSeen = rawLastSeen != null 
-        ? DateTime.parse(rawLastSeen.toString()) 
-        : null;
+    final lastSeen =
+        rawLastSeen != null ? DateTime.parse(rawLastSeen.toString()) : null;
 
     return Session(
-      partner: Partner.fromJson(json['partner'] as Map<String, dynamic>? ?? const {}),
+      partner: Partner.fromJson(
+          json['partner'] as Map<String, dynamic>? ?? const {}),
       conversationId: json['conversation_id'] as String? ?? '',
       recentMessages: messages,
       unreadProactive: proactive,
-      memoryCount: json['memory_count'] as int? ?? json['memories_count'] as int? ?? 0,
+      memoryCount:
+          json['memory_count'] as int? ?? json['memories_count'] as int? ?? 0,
       daysTogether: json['days_together'] as int? ?? 0,
       lastSeen: lastSeen,
     );

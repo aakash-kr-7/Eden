@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: main.dart
 // PURPOSE: Eden app entry point. Firebase init, Riverpod, routing.
+// RESPONSIBILITIES: Bootstrap core services, register routes, and mount the root app widget.
+// NEVER: Contain screen-specific business rules or backend behavior changes.
 // CONTEXT: Bootstraps the entire Flutter application.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -12,11 +14,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
 import 'firebase_options.dart';
-import 'theme/eden_theme.dart';
-import 'theme/glass_theme.dart';
+import 'theme/nocturne.dart';
 import 'screens/boot_screen.dart';
 import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
@@ -27,7 +27,7 @@ import 'screens/settings_screen.dart';
 import 'services/auth_service.dart';
 import 'services/api_service.dart';
 import 'services/notification_service.dart';
-import 'widgets/liquid_background.dart';
+import 'components/app_background.dart';
 
 // --- Riverpod Service Providers ---
 
@@ -47,6 +47,18 @@ final notificationServiceProvider = Provider<NotificationService>((ref) {
   final apiService = ref.watch(apiServiceProvider);
   return NotificationService(apiService);
 });
+
+class AppRoute {
+  AppRoute._();
+
+  static const String boot = '/';
+  static const String splash = '/splash';
+  static const String auth = '/auth';
+  static const String onboarding = '/onboarding';
+  static const String chat = '/chat';
+  static const String profile = '/chat/profile';
+  static const String memory = '/chat/memory';
+}
 
 // --- GoRouter Refresh Stream Listenable Helper ---
 class GoRouterRefreshStream extends ChangeNotifier {
@@ -71,60 +83,93 @@ final routerProvider = Provider<GoRouter>((ref) {
   final authService = ref.watch(authServiceProvider);
 
   return GoRouter(
-    initialLocation: '/',
+    initialLocation: AppRoute.boot,
     refreshListenable: GoRouterRefreshStream(authService.authStateChanges),
     redirect: (context, state) {
       final isAuthenticated = authService.currentUser != null;
 
-      final isSplash =
-          state.matchedLocation == '/' || state.matchedLocation == '/splash';
-      final isAuth = state.matchedLocation == '/auth';
+      final isSplash = state.matchedLocation == AppRoute.boot ||
+          state.matchedLocation == AppRoute.splash;
+      final isAuth = state.matchedLocation == AppRoute.auth;
 
       if (!isAuthenticated) {
-        // Force unauthenticated users to /auth unless they are already there or on the startup screens
         if (!isAuth && !isSplash) {
-          return '/auth';
+          return AppRoute.auth;
         }
       } else {
-        // Authenticated users should not visit /auth
         if (isAuth) {
-          return '/';
+          return AppRoute.boot;
         }
       }
       return null;
     },
     routes: [
       GoRoute(
-        path: '/',
+        path: AppRoute.boot,
         builder: (context, state) => const BootScreen(),
       ),
       GoRoute(
-        path: '/splash',
+        path: AppRoute.splash,
         builder: (context, state) => const SplashScreen(),
       ),
       GoRoute(
-        path: '/auth',
+        path: AppRoute.auth,
         builder: (context, state) => const AuthScreen(),
       ),
       GoRoute(
-        path: '/onboarding',
+        path: AppRoute.onboarding,
         builder: (context, state) => const OnboardingScreen(),
       ),
       GoRoute(
-        path: '/chat',
+        path: AppRoute.chat,
         builder: (context, state) => const ChatScreen(),
-      ),
-      GoRoute(
-        path: '/memories',
-        builder: (context, state) => const MemoryVaultScreen(),
-      ),
-      GoRoute(
-        path: '/settings',
-        builder: (context, state) => const SettingsScreen(),
+        routes: [
+          GoRoute(
+            path: 'profile',
+            pageBuilder: (context, state) =>
+                _buildOverlayPage(state, const SettingsScreen()),
+          ),
+          GoRoute(
+            path: 'memory',
+            pageBuilder: (context, state) =>
+                _buildOverlayPage(state, const MemoryVaultScreen()),
+          ),
+        ],
       ),
     ],
   );
 });
+
+CustomTransitionPage<void> _buildOverlayPage(
+    GoRouterState state, Widget child) {
+  return CustomTransitionPage<void>(
+    key: state.pageKey,
+    opaque: false,
+    barrierColor: Colors.transparent,
+    transitionDuration: Nocturne.durationStandard,
+    reverseTransitionDuration: Nocturne.durationFast,
+    child: child,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      final fade = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      );
+      final slide = Tween<Offset>(
+        begin: const Offset(0, 0.015),
+        end: Offset.zero,
+      ).animate(fade);
+
+      return FadeTransition(
+        opacity: fade,
+        child: SlideTransition(
+          position: slide,
+          child: child,
+        ),
+      );
+    },
+  );
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -143,7 +188,7 @@ void main() async {
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
-    systemNavigationBarColor: EdenTheme.bgPrimary,
+    systemNavigationBarColor: Nocturne.bgPrimary,
     systemNavigationBarIconBrightness: Brightness.light,
   ));
 
@@ -180,7 +225,7 @@ class _EdenAppState extends ConsumerState<EdenApp> {
     // Configure background notification tap routing callback
     notificationService.onNavigateToChat = () {
       final router = ref.read(routerProvider);
-      router.go('/chat');
+      router.go(AppRoute.chat);
     };
 
     await notificationService.initialize();
@@ -193,18 +238,15 @@ class _EdenAppState extends ConsumerState<EdenApp> {
     return MaterialApp.router(
       title: 'Eden',
       debugShowCheckedModeBanner: false,
-      theme: EdenTheme.dark().copyWith(
+      theme: Nocturne.theme.copyWith(
         scaffoldBackgroundColor: Colors.transparent,
       ),
       routerConfig: router,
       builder: (context, child) {
         return Stack(
           children: [
-            const LiquidBackground(),
-            LiquidGlassLayer(
-              settings: GlassTheme.card,
-              child: child!,
-            ),
+            const AppBackground(),
+            child!,
           ],
         );
       },

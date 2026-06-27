@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: memory_provider.dart
 // PURPOSE: Riverpod provider managing user memory vault.
+// RESPONSIBILITIES: Load, filter, and mutate memory state for screen consumers.
+// NEVER: Contain widget layout, route flow, or backend schema changes.
 // CONTEXT: Frontend state providers.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -34,7 +36,8 @@ class MemoriesNotifier extends StateNotifier<List<Memory>> {
 
     try {
       final apiService = _ref.read(apiServiceProvider);
-      final list = await apiService.getMemories(type: type, sort: sort, page: 1);
+      final list =
+          await apiService.getMemories(type: type, sort: sort, page: 1);
       state = list;
       _hasMore = list.length >= 10;
     } catch (e) {
@@ -49,7 +52,8 @@ class MemoriesNotifier extends StateNotifier<List<Memory>> {
 
     try {
       final apiService = _ref.read(apiServiceProvider);
-      final list = await apiService.getMemories(type: _type, sort: _sort, page: nextPage);
+      final list = await apiService.getMemories(
+          type: _type, sort: _sort, page: nextPage);
       if (list.isEmpty) {
         _hasMore = false;
       } else {
@@ -67,7 +71,7 @@ class MemoriesNotifier extends StateNotifier<List<Memory>> {
   Future<void> pin(int id) async {
     final originalState = state;
     bool found = false;
-    
+
     state = state.map((m) {
       if (m.id == id) {
         found = true;
@@ -109,6 +113,7 @@ class MemoriesNotifier extends StateNotifier<List<Memory>> {
   }
 }
 
-final memoriesProvider = StateNotifierProvider<MemoriesNotifier, List<Memory>>((ref) {
+final memoriesProvider =
+    StateNotifierProvider<MemoriesNotifier, List<Memory>>((ref) {
   return MemoriesNotifier(ref);
 });

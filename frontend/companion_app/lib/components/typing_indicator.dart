@@ -1,12 +1,14 @@
 // ═══════════════════════════════════════════════════════════════════
-// FILE: widgets/typing_indicator.dart
-// PURPOSE: Animated typing indicator with variable duration.
+// FILE: components/typing_indicator.dart
+// PURPOSE: Animated typing indicator used by the chat experience.
+// RESPONSIBILITIES: Render typing dots and timing behavior for active message composition states.
+// NEVER: Contain chat transport logic, message state ownership, or API calls.
 // CONTEXT: Shows while partner is "typing" before each burst.
 // ═══════════════════════════════════════════════════════════════════
 
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../theme/eden_colors.dart';
+import '../theme/nocturne.dart';
 
 class TypingIndicatorV2 extends StatefulWidget {
   final Duration?
@@ -154,7 +156,7 @@ class _TypingIndicatorV2State extends State<TypingIndicatorV2>
                 height: widget.dotSize,
                 margin: EdgeInsets.symmetric(horizontal: widget.spacing / 2),
                 decoration: const BoxDecoration(
-                  color: EdenColors.edenIris,
+                  color: Nocturne.accentCool,
                   shape: BoxShape.circle,
                 ),
               ),

@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: onboarding.dart
 // PURPOSE: Data model mapping onboarding responses.
+// RESPONSIBILITIES: Represent onboarding payloads and step definitions for frontend state.
+// NEVER: Contain widget logic, route flow, or side effects.
 // CONTEXT: Frontend data models.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -68,7 +70,9 @@ class OnboardingStepResult {
     return OnboardingStepResult(
       nextStep: json['next_step']?.toString() ?? json['step']?.toString(),
       question: question,
-      isComplete: json['is_complete'] == true || json['is_complete'] == 1 || json['complete'] == true,
+      isComplete: json['is_complete'] == true ||
+          json['is_complete'] == 1 ||
+          json['complete'] == true,
     );
   }
 
@@ -94,8 +98,12 @@ class OnboardingCompleteResult {
 
   factory OnboardingCompleteResult.fromJson(Map<String, dynamic> json) {
     return OnboardingCompleteResult(
-      partnerName: json['partner_name'] as String? ?? json['companion_name'] as String? ?? '',
-      firstMessage: json['first_message'] as String? ?? json['opening_line'] as String? ?? '',
+      partnerName: json['partner_name'] as String? ??
+          json['companion_name'] as String? ??
+          '',
+      firstMessage: json['first_message'] as String? ??
+          json['opening_line'] as String? ??
+          '',
       conversationId: json['conversation_id'] as String? ?? '',
     );
   }

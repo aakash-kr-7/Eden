@@ -1,6 +1,8 @@
 // ═══════════════════════════════════════════════════════════════════
 // FILE: onboarding_provider.dart
 // PURPOSE: Riverpod provider managing onboarding step state and submission.
+// RESPONSIBILITIES: Track onboarding progress and expose completion state to the UI.
+// NEVER: Contain widget composition, route registration, or backend logic rewrites.
 // CONTEXT: Frontend state providers.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -65,10 +67,10 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
       final apiService = _ref.read(apiServiceProvider);
-      
+
       final status = await apiService.onboardingStatus();
       final isComplete = status['complete'] as bool? ?? false;
-      
+
       if (isComplete) {
         await complete();
       } else {
@@ -87,12 +89,13 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
 
   Future<void> respond(int step, dynamic response) async {
     state = state.copyWith(isLoading: true, errorMessage: null);
-    final updatedResponses = Map<int, dynamic>.from(state.responses)..[step] = response;
+    final updatedResponses = Map<int, dynamic>.from(state.responses)
+      ..[step] = response;
 
     try {
       final apiService = _ref.read(apiServiceProvider);
       final result = await apiService.onboardingRespond(step, response);
-      
+
       if (result.isComplete) {
         state = state.copyWith(
           responses: updatedResponses,
@@ -120,7 +123,7 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
     try {
       final apiService = _ref.read(apiServiceProvider);
       final completeResult = await apiService.onboardingComplete();
-      
+
       state = state.copyWith(
         partnerName: completeResult.partnerName,
         firstMessage: completeResult.firstMessage,
@@ -135,6 +138,7 @@ class OnboardingNotifier extends StateNotifier<OnboardingState> {
   }
 }
 
-final onboardingProvider = StateNotifierProvider<OnboardingNotifier, OnboardingState>((ref) {
+final onboardingProvider =
+    StateNotifierProvider<OnboardingNotifier, OnboardingState>((ref) {
   return OnboardingNotifier(ref);
 });

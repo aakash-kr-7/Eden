@@ -1,12 +1,14 @@
+// FILE: screens/chat_screen.dart
+// PURPOSE: Main chat experience, preserving the current messaging and navigation flow.
+// RESPONSIBILITIES: Render chat UI and connect user interactions to existing providers.
+// NEVER: Contain backend protocol rewrites or global app bootstrap code.
 import 'dart:async';
 
-import 'package:eden/widgets/typing_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_keyboard_visibility/flutter_keyboard_visibility.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:liquid_glass_renderer/liquid_glass_renderer.dart';
 
 import '../main.dart';
 import '../models/models.dart';
@@ -14,6 +16,8 @@ import '../providers/chat_provider_v3.dart';
 import '../providers/session_provider.dart';
 import '../theme/eden_colors.dart';
 import '../theme/glass_theme.dart';
+import '../components/glass.dart';
+import '../components/typing_indicator.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -32,7 +36,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
   bool _isSending = false;
   String? _errorMessage;
   String? _lastSentText;
-  double _headerOpacity = 0.0;
+  double _headerOpacity = 1.0;
   bool _noConnection = false;
   int? _firstProactiveMessageId;
   bool _showSendButton = false;
@@ -74,7 +78,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       final offset = _scrollController.offset;
       final maxScroll = _scrollController.position.maxScrollExtent;
       final distanceFromBottom = maxScroll - offset;
-      final targetOpacity = distanceFromBottom > 100 ? 1.0 : 0.0;
+      const targetOpacity = 1.0;
 
       if (_headerOpacity != targetOpacity) {
         setState(() {
@@ -405,53 +409,46 @@ class _ChatScreenState extends ConsumerState<ChatScreen>
       top: 0,
       left: 0,
       right: 0,
-      child: IgnorePointer(
-        ignoring: _headerOpacity == 0.0,
-        child: AnimatedOpacity(
-          opacity: _headerOpacity,
-          duration: const Duration(milliseconds: 200),
-          child: FakeGlass(
-            shape: const LiquidRoundedSuperellipse(borderRadius: 0),
-            settings: GlassTheme.card,
-            child: SizedBox(
-              height: 80.0,
-              child: Stack(
-                alignment: Alignment.center,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        color: Colors.black.withValues(alpha: 0.14 + (_headerOpacity * 0.14)),
+        child: SizedBox(
+          height: 80.0,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Positioned(
+                left: 12,
+                child: IconButton(
+                  icon: const Icon(Icons.person_outline_rounded, size: 20),
+                  color: Colors.white70,
+                  onPressed: () => context.push(AppRoute.profile),
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Profile',
+                ),
+              ),
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(partnerName, style: _displayStyle(28)),
-                      const SizedBox(height: 2.0),
-                      Text(
-                        '$partnerName · $partnerMood',
-                        style: _bodyStyle(12, color: Colors.white60),
-                      ),
-                    ],
-                  ),
-                  Positioned(
-                    right: 12,
-                    child: Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.bookmark_border_rounded,
-                              size: 20),
-                          color: Colors.white70,
-                          onPressed: () => context.push('/memories'),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.settings_outlined, size: 20),
-                          color: Colors.white70,
-                          onPressed: () => context.push('/settings'),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      ],
-                    ),
+                  Text(partnerName, style: _displayStyle(28)),
+                  const SizedBox(height: 2.0),
+                  Text(
+                    '$partnerName · $partnerMood',
+                    style: _bodyStyle(12, color: Colors.white60),
                   ),
                 ],
               ),
-            ),
+              Positioned(
+                right: 12,
+                child: IconButton(
+                  icon: const Icon(Icons.bookmark_border_rounded, size: 20),
+                  color: Colors.white70,
+                  onPressed: () => context.push(AppRoute.memory),
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Memory',
+                ),
+              ),
+            ],
           ),
         ),
       ),
