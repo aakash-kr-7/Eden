@@ -18,7 +18,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'firebase_options.dart';
 import 'theme/nocturne.dart';
 import 'screens/boot_screen.dart';
-import 'screens/splash_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/chat_screen.dart';
@@ -53,16 +52,11 @@ class AppRoute {
   AppRoute._();
 
   static const String boot = '/';
-  static const String splash = '/splash';
   static const String auth = '/auth';
   static const String onboarding = '/onboarding';
   static const String chat = '/chat';
   static const String profile = '/chat/profile';
   static const String memory = '/chat/memory';
-
-  static String splashRoute({bool animate = true}) {
-    return animate ? splash : '$splash?animate=false';
-  }
 }
 
 // --- GoRouter Refresh Stream Listenable Helper ---
@@ -93,17 +87,16 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final isAuthenticated = authService.currentUser != null;
 
-      final isSplash = state.matchedLocation == AppRoute.boot ||
-          state.matchedLocation == AppRoute.splash;
+      final isBoot = state.matchedLocation == AppRoute.boot;
       final isAuth = state.matchedLocation == AppRoute.auth;
 
       if (!isAuthenticated) {
-        if (!isAuth && !isSplash) {
+        if (!isAuth && !isBoot) {
           return AppRoute.auth;
         }
       } else {
         if (isAuth) {
-          return AppRoute.splashRoute(animate: false);
+          return AppRoute.boot;
         }
       }
       return null;
@@ -112,12 +105,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoute.boot,
         builder: (context, state) => const BootScreen(),
-      ),
-      GoRoute(
-        path: AppRoute.splash,
-        builder: (context, state) => SplashScreen(
-          animate: state.uri.queryParameters['animate'] != 'false',
-        ),
       ),
       GoRoute(
         path: AppRoute.auth,

@@ -5,81 +5,130 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:video_player/video_player.dart';
 
 import '../main.dart';
 import '../theme/nocturne.dart';
 
-class BootScreen extends StatefulWidget {
+class BootScreen extends ConsumerStatefulWidget {
   const BootScreen({super.key});
 
   @override
-  State<BootScreen> createState() => _BootScreenState();
+  ConsumerState<BootScreen> createState() => _BootScreenState();
 }
 
-class _BootScreenState extends State<BootScreen> {
-  late final VideoPlayerController _controller;
+class _BootScreenState extends ConsumerState<BootScreen> {
+  static bool _hasPlayedBoot = false;
+
+  VideoPlayerController? _controller;
   bool _hasNavigated = false;
+  bool _skippingVideo = false;
 
   @override
   void initState() {
     super.initState();
 
-    _controller = VideoPlayerController.asset('assets/bootup_animation.mp4');
-
-    unawaited(_initializeVideo());
+    if (_hasPlayedBoot) {
+      _skippingVideo = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _navigateToNextScreen();
+      });
+    } else {
+      _hasPlayedBoot = true;
+      _controller = VideoPlayerController.asset('assets/bootup_animation.mp4');
+      unawaited(_initializeVideo());
+    }
   }
 
   Future<void> _initializeVideo() async {
+    final controller = _controller;
+    if (controller == null) return;
     try {
-      await _controller.initialize();
+      await controller.initialize();
       if (!mounted) return;
 
       setState(() {});
-      await _controller.play();
-      _controller.addListener(_handleVideoState);
+      await controller.play();
+      controller.addListener(_handleVideoState);
 
       await Future.delayed(const Duration(seconds: 4));
       if (mounted && !_hasNavigated) {
-        _navigateToSplash();
+        _navigateToNextScreen();
       }
     } catch (_) {
       if (mounted && !_hasNavigated) {
-        _navigateToSplash();
+        _navigateToNextScreen();
       }
     }
   }
 
   void _handleVideoState() {
-    if (_controller.value.isInitialized &&
-        _controller.value.position >= _controller.value.duration) {
-      _navigateToSplash();
+    final controller = _controller;
+    if (controller != null &&
+        controller.value.isInitialized &&
+        controller.value.position >= controller.value.duration) {
+      _navigateToNextScreen();
     }
   }
 
-  void _navigateToSplash() {
+  Future<void> _navigateToNextScreen() async {
     if (_hasNavigated || !mounted) return;
     _hasNavigated = true;
-    context.go(AppRoute.splash);
+
+    final authService = ref.read(authServiceProvider);
+    final isAuthenticated = authService.currentUser != null;
+
+    if (!isAuthenticated) {
+      context.go(AppRoute.auth);
+      return;
+    }
+
+    try {
+      final status = await ref.read(apiServiceProvider).onboardingStatus();
+      final isComplete = _statusFlag(status['complete']);
+      if (!mounted) return;
+      context.go(isComplete ? AppRoute.chat : AppRoute.onboarding);
+    } catch (_) {
+      if (!mounted) return;
+      context.go(AppRoute.chat);
+    }
+  }
+
+  bool _statusFlag(dynamic value) {
+    if (value == true || value == 1) return true;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      return normalized == 'true' || normalized == '1';
+    }
+    return false;
   }
 
   @override
   void dispose() {
-    _controller.removeListener(_handleVideoState);
-    _controller.dispose();
+    _controller?.removeListener(_handleVideoState);
+    _controller?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_skippingVideo) {
+      return const Scaffold(
+        backgroundColor: Nocturne.black,
+        body: SizedBox.shrink(),
+      );
+    }
+
+    final controller = _controller;
     return Scaffold(
       backgroundColor: Nocturne.black,
       body: Center(
-        child: _controller.value.isInitialized
+        child: controller != null && controller.value.isInitialized
             ? AspectRatio(
-                aspectRatio: _controller.value.aspectRatio,
-                child: VideoPlayer(_controller),
+                aspectRatio: controller.value.aspectRatio,
+                child: VideoPlayer(controller),
               )
             : const SizedBox.shrink(),
       ),
